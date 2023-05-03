@@ -1,0 +1,4 @@
+bokeh==2.4.3
+psutil==5.9.4
+# pyrsmi
+# --index-url https://test.pypi.org/simple pyrsmi

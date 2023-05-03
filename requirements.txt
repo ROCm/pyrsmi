@@ -1,0 +1,3 @@
+pytest
+# twine   # for uploading package to PyPI
+wheel
