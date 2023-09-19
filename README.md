@@ -9,7 +9,7 @@
 
 ## How to install from source
 - Clone this repo: 
-  - `git clone https://github.com/AMD-AI/pyrsmi.git`
+  - `git clone https://github.com/RadeonOpenCompute/pyrsmi.git`
   - cd pyrsmi
 - `python -m pip install -e .`
 - `pyrsmi` can be installed as PyPA-compatible Python package.
