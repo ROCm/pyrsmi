@@ -35,8 +35,8 @@ def main():
     mem_used = [rocml.smi_get_device_memory_used(d) * 1e-6 for d in range(ngpus)]
 
     print(f'no. of devices = {ngpus}\n')
-    print('device id\tdevice name\t\t\ttotal memory(GB)  used memory(MB)')
-    print('-' * 80)
+    print('device id\tdevice name\ttotal memory(GB)  used memory(MB)')
+    print('-' * 65)
     for i, d in enumerate(range(ngpus)):
         print(f'{i:6}    {device_names[i]}\t\t{mem_total[i]:.2f}\t\t{mem_used[i]:.2f}')
 

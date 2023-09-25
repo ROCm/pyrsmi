@@ -14,10 +14,17 @@
 - `python -m pip install -e .`
 - `pyrsmi` can be installed as PyPA-compatible Python package.
 
+## How to install Python packages
+- Install `build` package:
+  - `pip install build`
+- At the top directory (where setup.py is), run: `python -m build`
+- Then by default packages (both sdist and wheel) will be built under `dist` directory.
+- The packages can be either installed with `pip install`, or be uploaded to PyPI (release or test) repo, or an artifactory of your choice. The latter can be installed liked beflow.
+
 ## How to install from PyPI
-- **NOTE:** For now, as a beta version, the package is available from PyPI test site:
+- **NOTE:** Until the package becomes available at the official PyPI repo, the package is available from **test PyPI** site:
 - `python -m pip install --index-url https://test.pypi.org/simple pyrsmi`
-- When the release version become available at pypi.org site:
+- When the release version become available at pypi.org site, the package can be installed with :
   -  `python -m pip install pyrsmi`
 
 ## How to use `pyrsmi`
