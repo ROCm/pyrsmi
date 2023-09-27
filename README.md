@@ -56,5 +56,5 @@ rocml.smi_shutdown()
 | smi_get_device_memory_used | get device memory usage | device_id | int | in Bytes, type 'VRAM' |
 | smi_get_device_memory_total | get device's total memory | device_id | int | in Bytes, type 'VRAM' |
 | smi_get_device_pcie_bandwidth | get device's estimated PCIe bandwidth | device_id | float | in Bytes/sec |
-| smi_get_device_compute_process | get list of pid of processes running on dev | device_id | List[int] |  |
+| smi_get_device_compute_process | get list of pid of processes running on the system | None | List[int] |  |
 | smi_get_device_average_power | get device's average power | device_id | float | power in Watt |
