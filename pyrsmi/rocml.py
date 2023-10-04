@@ -337,8 +337,8 @@ def smi_get_device_pcie_bandwidth(dev):
     return (recv.value + sent.value) * max_pkt_sz.value if rsmi_ret_ok(ret) else -1
 
 
-def smi_get_device_compute_process(dev):
-    """returns list of process ids running compute on the device dev"""
+def smi_get_device_compute_process():
+    """returns list of process ids running compute on the system"""
     num_procs = c_uint32()
     ret = rocm_lib.rsmi_compute_process_info_get(None, byref(num_procs))
     if rsmi_ret_ok(ret):
