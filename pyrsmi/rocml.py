@@ -283,6 +283,11 @@ def smi_get_kernel_version():
     ret = rocm_lib.rsmi_version_str_get(rsmi_sw_component_t.RSMI_SW_COMP_DRIVER, ver_str, 256)
     return ver_str.value.decode() if rsmi_ret_ok(ret) else ''
 
+def smi_get_device_id(dev):
+    """returns device id of the device as 64bit integer"""
+    uid = c_uint64()
+    ret = rocm_lib.rsmi_dev_id_get(dev, byref(uid))
+    return uid.value if rsmi_ret_ok(ret) else -1
 
 def smi_get_device_count():
     """returns a list of GPU devices """
@@ -303,7 +308,6 @@ def smi_get_device_unique_id(dev):
     uid = c_uint64()
     ret = rocm_lib.rsmi_dev_unique_id_get(dev, byref(uid))
     return uid.value if rsmi_ret_ok(ret) else -1
-
 
 def smi_get_device_utilization(dev):
     """returns GPU device busy percent of device_id dev"""
