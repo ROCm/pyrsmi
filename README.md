@@ -49,7 +49,7 @@ rocml.smi_shutdown()
 | smi_shutdown   | shut down rsmi  | None | None |  |
 | smi_get_version | get version of rsmi  | None | str | 'major.minor.patch' |
 | smi_get_kernel_version | get version of ROCm kernel driver  | None | str | |
-| smi_get_device_id | get device id of GPU devices  | None | int | num of devices |
+| smi_get_device_id | get device id of GPU devices  | None | uint64 | id of devices |
 | smi_get_device_count | get number of GPU devices  | None | int | num of devices |
 | smi_get_device_name  | get name of GPU devices  | None | str | |
 | smi_get_device_unique_id   | get unique id of GPU devices  | None | int | 64bit integer |
