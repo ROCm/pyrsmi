@@ -1,17 +1,17 @@
 # MIT License
-# 
+#
 # Copyright (c) 2023 Advanced Micro Devices, Inc.
-# 
+#
 # Permission is hereby granted, free of charge, to any person obtaining a copy
 # of this software and associated documentation files (the "Software"), to deal
 # in the Software without restriction, including without limitation the rights
 # to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
 # copies of the Software, and to permit persons to whom the Software is
 # furnished to do so, subject to the following conditions:
-# 
+#
 # The above copyright notice and this permission notice shall be included in all
 # copies or substantial portions of the Software.
-# 
+#
 # THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
 # IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
 # FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
@@ -208,12 +208,9 @@ def _find_lib_rocm():
     """search for librocm and returns path
     if search fails, returns empty string
     """
-    for root, dirs, files in os.walk('/opt', followlinks=True):
-        
-        if LIBROCM_NAME in files:
-            path = join(realpath(root), LIBROCM_NAME)
-
-    return path if isfile(path) else ''
+    rocm_path = os.environ.get('ROCM_PATH', '/opt/rocm')
+    rocm_lib_path = join(rocm_path, f'lib/{LIBROCM_NAME}')
+    return rocm_lib_path if isfile(rocm_lib_path) else ''
 
 
 def _driver_initialized():
@@ -238,7 +235,7 @@ def smi_initialize():
             raise RuntimeError('ROCm SMI initialization failed')
     else:
         raise RuntimeError('ROCm driver initilization failed')
-    
+
     # update reference count
     global _rocm_lib_refcount
     lib_load_lock.acquire()
@@ -270,7 +267,7 @@ def smi_shutdown():
     lib_load_lock.acquire()
     _rocm_lib_refcount -= 1
     lib_load_lock.release()
-   
+
 
 def smi_get_version():
     """returns RSMI version"""
@@ -349,7 +346,7 @@ def smi_get_device_compute_process():
         buff_sz = num_procs.value + 10
         proc_info = (rsmi_process_info_t * buff_sz)()
         ret2 = rocm_lib.rsmi_compute_process_info_get(byref(proc_info), byref(num_procs))
-        
+
         return [proc_info[i].process_id for i in range(num_procs.value)] if rsmi_ret_ok(ret2) else []
     else:
         return []
@@ -359,6 +356,5 @@ def smi_get_device_average_power(dev):
     """returns average power of device_id dev"""
     power = c_uint32()
     ret = rocm_lib.rsmi_dev_power_ave_get(dev, 0, byref(power))
-    
-    return power.value * 1e-6 if rsmi_ret_ok(ret) else -1
 
+    return power.value * 1e-6 if rsmi_ret_ok(ret) else -1
