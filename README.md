@@ -28,14 +28,20 @@
   -  `python -m pip install pyrsmi`
 
 ## How to use `pyrsmi`
-- In python:
-```python
-from pyrsmi import rocml
+- Environment setup:
+  - `pyrsmi` searches for `rocm-smi` library from default ROCm environment variable `ROCM_PATH`. So, for standard ROCm installation, the library will be automatically detected. In some unusual case where the ROCm installation is moved, make sure to set the environment variable as so :
+    ```bash
+    $ mv /opt/rocm/ /usr/local/xyz/
+    $ export ROCM_PATH=/usr/local/xyz/
+    ```
+- Running in python:
+    ```python
+    from pyrsmi import rocml
 
-rocml.smi_initialize()
-print(rocml.smi_get_device_count())
-rocml.smi_shutdown()
-```
+    rocml.smi_initialize()
+    print(rocml.smi_get_device_count())
+    rocml.smi_shutdown()
+    ```
 
 ## Examples
 - Examples directory contains a number of code snippets showing how to use the package.
