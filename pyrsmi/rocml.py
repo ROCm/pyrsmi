@@ -30,8 +30,6 @@ import sys
 import threading
 from enum import IntEnum, auto
 
-from pyrsmi._version import __version__
-
 
 ## Error checking
 class ROCMLError_NotSupported(Exception):
@@ -267,11 +265,6 @@ def smi_shutdown():
     lib_load_lock.acquire()
     _rocm_lib_refcount -= 1
     lib_load_lock.release()
-
-
-def smi_get_version():
-    """returns RSMI version"""
-    return __version__
 
 
 def smi_get_kernel_version():
