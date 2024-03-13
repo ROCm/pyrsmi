@@ -132,6 +132,12 @@ class rsmi_memory_type_t(c_int):
 memory_type_l = ['VRAM', 'VIS_VRAM', 'GTT']
 
 
+class rsmi_retired_page_record_t(Structure):
+    _fields_ = [('page_address', c_uint64),
+                ('page_size', c_uint64),
+                ('status', c_int)]
+
+
 class rsmi_sw_component_t(c_int):
     RSMI_SW_COMP_FIRST = 0x0
     RSMI_SW_COMP_DRIVER = RSMI_SW_COMP_FIRST
@@ -320,6 +326,21 @@ def smi_get_device_memory_total(dev, type='VRAM'):
     total = c_uint64()
     ret = rocm_lib.rsmi_dev_memory_total_get(dev, type_idx, byref(total))
     return total.value if rsmi_ret_ok(ret) else -1
+
+
+def smi_get_device_memory_busy(dev):
+    """returns percentage of time any device memory is being used"""
+    busy_percent = c_uint32()
+    ret = rocm_lib.rsmi_dev_memory_busy_percent_get(dev, byref(busy_percent))
+    return busy_percent.value if rsmi_ret_ok(ret) else -1
+
+
+def smi_get_device_memory_reserved_pages(dev):
+    """returns info about reserved memory pages"""
+    num_pages = c_uint32()
+    records = rsmi_retired_page_record_t()
+    ret = rocm_lib.rsmi_dev_memory_reserved_pages_get(dev, byref(num_pages), byref(records))
+    return (num_pages.value, records) if rsmi_ret_ok(ret) else -1
 
 
 def smi_get_device_pcie_bandwidth(dev):
