@@ -172,6 +172,28 @@ class rsmi_xgmi_status_t(c_int):
     RSMI_XGMI_STATUS_MULTIPLE_ERRORS = 2
 
 
+class rsmi_io_link_type(c_int):
+    RSMI_IOLINK_TYPE_UNDEFINED      = 0
+    RSMI_IOLINK_TYPE_HYPERTRANSPORT = 1
+    RSMI_IOLINK_TYPE_PCIEXPRESS     = 2
+    RSMI_IOLINK_TYPE_AMBA           = 3
+    RSMI_IOLINK_TYPE_MIPI           = 4
+    RSMI_IOLINK_TYPE_QPI_1_1        = 5
+    RSMI_IOLINK_TYPE_RESERVED1      = 6
+    RSMI_IOLINK_TYPE_RESERVED2      = 7
+    RSMI_IOLINK_TYPE_RAPID_IO       = 8
+    RSMI_IOLINK_TYPE_INFINIBAND     = 9
+    RSMI_IOLINK_TYPE_RESERVED3      = 10
+    RSMI_IOLINK_TYPE_XGMI           = 11
+    RSMI_IOLINK_TYPE_XGOP           = 12
+    RSMI_IOLINK_TYPE_GZ             = 13
+    RSMI_IOLINK_TYPE_ETHERNET_RDMA  = 14
+    RSMI_IOLINK_TYPE_RDMA_OTHER     = 15
+    RSMI_IOLINK_TYPE_OTHER          = 16
+    RSMI_IOLINK_TYPE_NUMIOLINKTYPES = 17
+    RSMI_IOLINK_TYPE_SIZE           = 0xFFFFFFFF
+
+
 ## Library loading
 rocm_lib = None
 lib_load_lock = threading.Lock()
@@ -402,6 +424,47 @@ def smi_get_device_pci_replay_counter(dev):
     counter = c_uint64()
     ret = rocm_lib.rsmi_dev_pci_replay_counter_get(dev, byref(counter))
     return counter.value if rsmi_ret_ok(ret) else -1
+
+
+# Hardware Topology functions
+def smi_get_device_topo_numa_node_number(dev):
+    """returns the NUMA node associated with the device"""
+    numa_node = c_uint32()
+    ret = rocm_lib.rsmi_topo_get_numa_node_number(dev, byref(numa_node))
+    return numa_node.value if rsmi_ret_ok(ret) else -1
+
+
+def smi_get_device_topo_link_weight(dev_src, dev_dst):
+    """returns the weight of the link between two devices"""
+    weight = c_uint64()
+    ret = rocm_lib.rsmi_topo_get_link_weight(dev_src, dev_dst, byref(weight))
+    return weight.value if rsmi_ret_ok(ret) else -1
+
+
+def smi_get_device_minmax_bandwidth(dev_src, dev_dst):
+    """returns the minimum and maximum io link bandwidth between two devices
+    API works if src and dst are connected via XGMI and are 1 hop away.
+    """
+    assert smi_get_device_link_type(dev_src, dev_dst)[0] == 1, 'Devices must be 1 hop away'
+    min_bandwidth = c_uint64()
+    max_bandwidth = c_uint64()
+    ret = rocm_lib.rsmi_minmax_bandwidth_get(dev_src, dev_dst, byref(min_bandwidth), byref(max_bandwidth))
+    return (min_bandwidth.value, max_bandwidth.value) if rsmi_ret_ok(ret) else -1
+
+
+def smi_get_device_link_type(dev_src, dev_dst):
+    """returns the hops and the type of link between two devices"""
+    hops = c_uint64()
+    link_type = rsmi_io_link_type()
+    ret = rocm_lib.rsmi_topo_get_link_type(dev_src, dev_dst, byref(hops), byref(link_type))
+    return (hops.value, link_type.value) if rsmi_ret_ok(ret) else -1
+
+
+def smi_is_device_p2p_accessible(dev_src, dev_dst):
+    """returns true if two devices are p2p accessible"""
+    accessible = c_bool()
+    ret = rocm_lib.rsmi_is_P2P_accessible(dev_src, dev_dst, byref(accessible))
+    return accessible.value if rsmi_ret_ok(ret) else -1
 
 
 def smi_get_device_compute_process():
