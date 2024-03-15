@@ -426,6 +426,46 @@ def smi_get_device_pci_replay_counter(dev):
     return counter.value if rsmi_ret_ok(ret) else -1
 
 
+# Compute partition functions
+def smi_get_device_compute_partition(dev):
+    """returns the compute partition of the device"""
+    partition = create_string_buffer(RSMI_MAX_BUFFER_LENGTH)
+    ret = rocm_lib.rsmi_dev_compute_partition_get(dev, byref(partition), RSMI_MAX_BUFFER_LENGTH)
+    return partition.value.decode() if rsmi_ret_ok(ret) else ''
+
+
+def smi_set_device_compute_partition(dev, partition):
+    """modifies the compute partition of the selected device"""
+    ret = rocm_lib.rsmi_dev_compute_partition_set(dev, partition)
+    return rsmi_ret_ok(ret)
+
+
+def smi_reset_device_compute_partition(dev):
+    """reverts the compute partition of the selected device to its boot state"""
+    ret = rocm_lib.rsmi_dev_compute_partition_reset(dev)
+    return rsmi_ret_ok(ret)
+
+
+# Memory partition functions
+def smi_get_device_memory_partition(dev):
+    """returns the memory partition of the device"""
+    partition = create_string_buffer(RSMI_MAX_BUFFER_LENGTH)
+    ret = rocm_lib.rsmi_dev_memory_partition_get(dev, byref(partition), RSMI_MAX_BUFFER_LENGTH)
+    return partition.value.decode() if rsmi_ret_ok(ret) else ''
+
+
+def smi_set_device_memory_partition(dev, partition):
+    """modifies the memory partition of the selected device"""
+    ret = rocm_lib.rsmi_dev_memory_partition_set(dev, partition)
+    return rsmi_ret_ok(ret)
+
+
+def smi_reset_device_memory_partition(dev):
+    """reverts the memory partition of the selected device to its boot state"""
+    ret = rocm_lib.rsmi_dev_memory_partition_reset(dev)
+    return rsmi_ret_ok(ret)
+
+
 # Hardware Topology functions
 def smi_get_device_topo_numa_node_number(dev):
     """returns the NUMA node associated with the device"""
