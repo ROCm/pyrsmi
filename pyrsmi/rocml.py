@@ -30,6 +30,8 @@ import sys
 import threading
 from enum import IntEnum, auto
 
+from .util import get_device_uuids
+
 
 ## Error checking
 class ROCMLError_NotSupported(Exception):
@@ -71,6 +73,12 @@ class ROCMLState(IntEnum):
 
 LIBROCM_NAME = 'librocm_smi64.so'
 RSMI_MAX_BUFFER_LENGTH = 256
+
+# Policy enums
+RSMI_MAX_NUM_FREQUENCIES = 32
+
+# UUIDs of all ROCm devices
+DEVICE_UUIDS = get_device_uuids()
 
 
 class rsmi_status_t(c_int):
@@ -132,10 +140,27 @@ class rsmi_memory_type_t(c_int):
 memory_type_l = ['VRAM', 'VIS_VRAM', 'GTT']
 
 
+class rsmi_retired_page_record_t(Structure):
+    _fields_ = [('page_address', c_uint64),
+                ('page_size', c_uint64),
+                ('status', c_int)]
+
+
 class rsmi_sw_component_t(c_int):
     RSMI_SW_COMP_FIRST = 0x0
     RSMI_SW_COMP_DRIVER = RSMI_SW_COMP_FIRST
     RSMI_SW_COMP_LAST = RSMI_SW_COMP_DRIVER
+
+
+class rsmi_frequencies_t(Structure):
+    _fields_ = [('num_supported', c_int32),
+                ('current', c_uint32),
+                ('frequency', c_uint64 * RSMI_MAX_NUM_FREQUENCIES)]
+
+
+class rsmi_pcie_bandwidth_t(Structure):
+    _fields_ = [('transfer_rate', rsmi_frequencies_t),
+                ('lanes', c_uint32 * RSMI_MAX_NUM_FREQUENCIES)]
 
 
 class rsmi_process_info_t(Structure):
@@ -144,6 +169,34 @@ class rsmi_process_info_t(Structure):
                 ('vram_usage', c_uint64),
                 ('sdma_usage', c_uint64),    # SDMA: System Direct Memory Access
                 ('cu_occupancy', c_uint32)]
+
+
+class rsmi_xgmi_status_t(c_int):
+    RSMI_XGMI_STATUS_NO_ERRORS = 0
+    RSMI_XGMI_STATUS_ERROR = 1
+    RSMI_XGMI_STATUS_MULTIPLE_ERRORS = 2
+
+
+class rsmi_io_link_type(c_int):
+    RSMI_IOLINK_TYPE_UNDEFINED      = 0
+    RSMI_IOLINK_TYPE_HYPERTRANSPORT = 1
+    RSMI_IOLINK_TYPE_PCIEXPRESS     = 2
+    RSMI_IOLINK_TYPE_AMBA           = 3
+    RSMI_IOLINK_TYPE_MIPI           = 4
+    RSMI_IOLINK_TYPE_QPI_1_1        = 5
+    RSMI_IOLINK_TYPE_RESERVED1      = 6
+    RSMI_IOLINK_TYPE_RESERVED2      = 7
+    RSMI_IOLINK_TYPE_RAPID_IO       = 8
+    RSMI_IOLINK_TYPE_INFINIBAND     = 9
+    RSMI_IOLINK_TYPE_RESERVED3      = 10
+    RSMI_IOLINK_TYPE_XGMI           = 11
+    RSMI_IOLINK_TYPE_XGOP           = 12
+    RSMI_IOLINK_TYPE_GZ             = 13
+    RSMI_IOLINK_TYPE_ETHERNET_RDMA  = 14
+    RSMI_IOLINK_TYPE_RDMA_OTHER     = 15
+    RSMI_IOLINK_TYPE_OTHER          = 16
+    RSMI_IOLINK_TYPE_NUMIOLINKTYPES = 17
+    RSMI_IOLINK_TYPE_SIZE           = 0xFFFFFFFF
 
 
 ## Library loading
@@ -322,13 +375,141 @@ def smi_get_device_memory_total(dev, type='VRAM'):
     return total.value if rsmi_ret_ok(ret) else -1
 
 
+def smi_get_device_memory_busy(dev):
+    """returns percentage of time any device memory is being used"""
+    busy_percent = c_uint32()
+    ret = rocm_lib.rsmi_dev_memory_busy_percent_get(dev, byref(busy_percent))
+    return busy_percent.value if rsmi_ret_ok(ret) else -1
+
+
+def smi_get_device_memory_reserved_pages(dev):
+    """returns info about reserved memory pages"""
+    num_pages = c_uint32()
+    records = rsmi_retired_page_record_t()
+    ret = rocm_lib.rsmi_dev_memory_reserved_pages_get(dev, byref(num_pages), byref(records))
+    return (num_pages.value, records) if rsmi_ret_ok(ret) else -1
+
+
+# PCIE functions
 def smi_get_device_pcie_bandwidth(dev):
-    """returns estimated pcie bandwidth for the device in bytes/sec"""
+    """returns list of possible pcie bandwidths for the device in bytes/sec"""
+    bandwidth = rsmi_pcie_bandwidth_t()
+    ret = rocm_lib.rsmi_dev_pci_bandwidth_get(dev, byref(bandwidth))
+    return bandwidth if rsmi_ret_ok(ret) else -1
+
+
+def smi_get_device_pci_id(dev):
+    """returns unique PCI ID of the device in 64bit Hex with format:
+       BDFID = ((DOMAIN & 0xffffffff) << 32) | ((BUS & 0xff) << 8) |
+                    ((DEVICE & 0x1f) <<3 ) | (FUNCTION & 0x7)
+    """
+    bdfid = c_uint64()
+    ret = rocm_lib.rsmi_dev_pci_id_get(dev, byref(bdfid))
+    return bdfid.value if rsmi_ret_ok(ret) else -1
+
+
+def smi_get_device_topo_numa_affinity(dev):
+    """returns the NUMA node associated with the device"""
+    numa_node = c_uint32()
+    ret = reocm_lib.rsmi_topo_numa_affinity_get(dev, byref(numa_node))
+    return numa_node.value if rsmi_ret_ok(ret) else -1
+
+
+def smi_get_device_pcie_throughput(dev):
+    """returns measured pcie throughput for the device in bytes/sec"""
     sent = c_uint64()
     recv = c_uint64()
     max_pkt_sz = c_uint64()
     ret = rocm_lib.rsmi_dev_pci_throughput_get(dev, byref(sent), byref(recv), byref(max_pkt_sz))
     return (recv.value + sent.value) * max_pkt_sz.value if rsmi_ret_ok(ret) else -1
+
+
+def smi_get_device_pci_replay_counter(dev):
+    """return PCIe replay counter of the device"""
+    counter = c_uint64()
+    ret = rocm_lib.rsmi_dev_pci_replay_counter_get(dev, byref(counter))
+    return counter.value if rsmi_ret_ok(ret) else -1
+
+
+# Compute partition functions
+def smi_get_device_compute_partition(dev):
+    """returns the compute partition of the device"""
+    partition = create_string_buffer(RSMI_MAX_BUFFER_LENGTH)
+    ret = rocm_lib.rsmi_dev_compute_partition_get(dev, byref(partition), RSMI_MAX_BUFFER_LENGTH)
+    return partition.value.decode() if rsmi_ret_ok(ret) else ''
+
+
+def smi_set_device_compute_partition(dev, partition):
+    """modifies the compute partition of the selected device"""
+    ret = rocm_lib.rsmi_dev_compute_partition_set(dev, partition)
+    return rsmi_ret_ok(ret)
+
+
+def smi_reset_device_compute_partition(dev):
+    """reverts the compute partition of the selected device to its boot state"""
+    ret = rocm_lib.rsmi_dev_compute_partition_reset(dev)
+    return rsmi_ret_ok(ret)
+
+
+# Memory partition functions
+def smi_get_device_memory_partition(dev):
+    """returns the memory partition of the device"""
+    partition = create_string_buffer(RSMI_MAX_BUFFER_LENGTH)
+    ret = rocm_lib.rsmi_dev_memory_partition_get(dev, byref(partition), RSMI_MAX_BUFFER_LENGTH)
+    return partition.value.decode() if rsmi_ret_ok(ret) else ''
+
+
+def smi_set_device_memory_partition(dev, partition):
+    """modifies the memory partition of the selected device"""
+    ret = rocm_lib.rsmi_dev_memory_partition_set(dev, partition)
+    return rsmi_ret_ok(ret)
+
+
+def smi_reset_device_memory_partition(dev):
+    """reverts the memory partition of the selected device to its boot state"""
+    ret = rocm_lib.rsmi_dev_memory_partition_reset(dev)
+    return rsmi_ret_ok(ret)
+
+
+# Hardware Topology functions
+def smi_get_device_topo_numa_node_number(dev):
+    """returns the NUMA node associated with the device"""
+    numa_node = c_uint32()
+    ret = rocm_lib.rsmi_topo_get_numa_node_number(dev, byref(numa_node))
+    return numa_node.value if rsmi_ret_ok(ret) else -1
+
+
+def smi_get_device_topo_link_weight(dev_src, dev_dst):
+    """returns the weight of the link between two devices"""
+    weight = c_uint64()
+    ret = rocm_lib.rsmi_topo_get_link_weight(dev_src, dev_dst, byref(weight))
+    return weight.value if rsmi_ret_ok(ret) else -1
+
+
+def smi_get_device_minmax_bandwidth(dev_src, dev_dst):
+    """returns the minimum and maximum io link bandwidth between two devices
+    API works if src and dst are connected via XGMI and are 1 hop away.
+    """
+    assert smi_get_device_link_type(dev_src, dev_dst)[0] == 1, 'Devices must be 1 hop away'
+    min_bandwidth = c_uint64()
+    max_bandwidth = c_uint64()
+    ret = rocm_lib.rsmi_minmax_bandwidth_get(dev_src, dev_dst, byref(min_bandwidth), byref(max_bandwidth))
+    return (min_bandwidth.value, max_bandwidth.value) if rsmi_ret_ok(ret) else -1
+
+
+def smi_get_device_link_type(dev_src, dev_dst):
+    """returns the hops and the type of link between two devices"""
+    hops = c_uint64()
+    link_type = rsmi_io_link_type()
+    ret = rocm_lib.rsmi_topo_get_link_type(dev_src, dev_dst, byref(hops), byref(link_type))
+    return (hops.value, link_type.value) if rsmi_ret_ok(ret) else -1
+
+
+def smi_is_device_p2p_accessible(dev_src, dev_dst):
+    """returns true if two devices are p2p accessible"""
+    accessible = c_bool()
+    ret = rocm_lib.rsmi_is_P2P_accessible(dev_src, dev_dst, byref(accessible))
+    return accessible.value if rsmi_ret_ok(ret) else -1
 
 
 def smi_get_device_compute_process():
@@ -351,3 +532,50 @@ def smi_get_device_average_power(dev):
     ret = rocm_lib.rsmi_dev_power_ave_get(dev, 0, byref(power))
 
     return power.value * 1e-6 if rsmi_ret_ok(ret) else -1
+
+
+# XGMI fuctions
+def smi_get_device_xgmi_error_status(dev):
+    """returns XGMI error status for a device"""
+    status = rsmi_xgmi_status_t()
+    ret = rocm_lib.rsmi_dev_xgmi_error_status(dev, byref(status))
+    return status.value if rsmi_ret_ok(ret) else -1
+
+
+def smi_reset_device_xgmi_error(dev):
+    """resets XGMI error status for a device"""
+    ret = rocm_lib.rsmi_dev_xgmi_error_reset(dev)
+    return rsmi_ret_ok(ret)
+
+
+def smi_get_device_xgmi_hive_id(dev):
+    """returns XGMI hive ID for a device"""
+    hive_id = c_uint64()
+    ret = rocm_lib.rsmi_dev_xgmi_hive_id_get(dev, byref(hive_id))
+    return hive_id.value if rsmi_ret_ok(ret) else -1
+
+
+# constants for the UUID function
+B1 = '%02x'
+B2 = B1 * 2
+B4 = B1 * 4
+B6 = B1 * 6
+nv_fmt = f'GPU-{B4}-{B2}-{B2}-{B2}-{B6}'
+
+# UUID function
+def smi_get_device_uuid(dev, format='roc'):
+    """returns the UUID of the device"""
+    assert dev < len(DEVICE_UUIDS), 'Device index out of range'
+
+    u_s = DEVICE_UUIDS[dev]
+
+    if format == 'roc':
+        # use hex strings
+        return f'GPU-{u_s}'
+    elif format == 'nv':
+        # break down to ASCII strings according to the format
+        b_a = bytearray()
+        b_a.extend(map(ord, u_s))
+        return nv_fmt % tuple(b_a)
+    else:
+        raise ValueError(f'Invalid format: \'{format}\'; use \'roc\' or \'nv\'')
