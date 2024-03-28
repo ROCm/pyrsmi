@@ -30,6 +30,8 @@ import sys
 import threading
 from enum import IntEnum, auto
 
+from .util import get_device_uuids
+
 
 ## Error checking
 class ROCMLError_NotSupported(Exception):
@@ -74,6 +76,9 @@ RSMI_MAX_BUFFER_LENGTH = 256
 
 # Policy enums
 RSMI_MAX_NUM_FREQUENCIES = 32
+
+# UUIDs of all ROCm devices
+DEVICE_UUIDS = get_device_uuids()
 
 
 class rsmi_status_t(c_int):
@@ -548,3 +553,29 @@ def smi_get_device_xgmi_hive_id(dev):
     hive_id = c_uint64()
     ret = rocm_lib.rsmi_dev_xgmi_hive_id_get(dev, byref(hive_id))
     return hive_id.value if rsmi_ret_ok(ret) else -1
+
+
+# constants for the UUID function
+B1 = '%02x'
+B2 = B1 * 2
+B4 = B1 * 4
+B6 = B1 * 6
+nv_fmt = f'GPU-{B4}-{B2}-{B2}-{B2}-{B6}'
+
+# UUID function
+def smi_get_device_uuid(dev, format='roc'):
+    """returns the UUID of the device"""
+    assert dev < len(DEVICE_UUIDS), 'Device index out of range'
+
+    u_s = DEVICE_UUIDS[dev]
+
+    if format == 'roc':
+        # use hex strings
+        return f'GPU-{u_s}'
+    elif format == 'nv':
+        # break down to ASCII strings according to the format
+        b_a = bytearray()
+        b_a.extend(map(ord, u_s))
+        return nv_fmt % tuple(b_a)
+    else:
+        raise ValueError(f'Invalid format: \'{format}\'; use \'roc\' or \'nv\'')
