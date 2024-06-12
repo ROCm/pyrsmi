@@ -345,6 +345,11 @@ def smi_get_device_name(dev):
     ret = rocm_lib.rsmi_dev_name_get(dev, series, RSMI_MAX_BUFFER_LENGTH)
     return series.value.decode() if rsmi_ret_ok(ret) else ''
 
+def smi_get_device_revision(dev):
+    """returns device revision"""
+    rev = c_uint64()
+    ret = rocm_lib.rsmi_dev_revision_get(dev, byref(rev))
+    return rev.value if rsmi_ret_ok(ret) else -1
 
 def smi_get_device_unique_id(dev):
     """returns unique id of the device as 64bit integer"""
@@ -389,6 +394,23 @@ def smi_get_device_memory_reserved_pages(dev):
     ret = rocm_lib.rsmi_dev_memory_reserved_pages_get(dev, byref(num_pages), byref(records))
     return (num_pages.value, records) if rsmi_ret_ok(ret) else -1
 
+def smi_get_device_fan_rpms(dev, index = 0):
+    """returns fan rpms of device_id dev in RPMs"""
+    rpms = c_uint64()
+    ret = rocm_lib.rsmi_dev_fan_rpms_get(dev, index, byref(rpms))
+    return rpms.value if rsmi_ret_ok(ret) else -1
+
+def smi_get_device_fan_speed(dev, index = 0):
+    """returns fan speed"""
+    speed = c_uint32()
+    ret = rocm_lib.rsmi_dev_fan_speed_get(dev, index, byref(speed))
+    return speed.value if rsmi_ret_ok(ret) else -1
+
+def smi_get_device_fan_speed_max(dev, index = 0):
+    """returns maximum fan speed"""
+    speed = c_uint32()
+    ret = rocm_lib.rsmi_dev_fan_speed_max_get(dev, index, byref(speed))
+    return speed.value if rsmi_ret_ok(ret) else -1
 
 # PCIE functions
 def smi_get_device_pcie_bandwidth(dev):
