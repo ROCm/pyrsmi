@@ -22,9 +22,7 @@
 - The packages can be either installed with `pip install`, or be uploaded to PyPI (release or test) repo, or an artifactory of your choice. The latter can be installed liked beflow.
 
 ## How to install from PyPI
-- **NOTE:** Until the package becomes available at the official PyPI repo, the package is available from **test PyPI** site:
-- `python -m pip install --index-url https://test.pypi.org/simple pyrsmi`
-- When the release version become available at pypi.org site, the package can be installed with :
+- **NOTE:** Release versions are available at pypi.org, and the package can be installed with :
   -  `python -m pip install pyrsmi`
 
 ## How to use `pyrsmi`
@@ -49,6 +47,8 @@
 
 ## List of API functions
 
+- The list is not exhaustive. Please refer to the code for missing functions.
+
 | Function | Description | Argument | Return Type | Note |
 | -------- | ----------- | -------  | ----------  | ---- |
 | smi_initialize | initialize rsmi | None | None |  |
@@ -67,3 +67,9 @@
 | smi_get_device_pcie_bandwidth | get device's estimated PCIe bandwidth | device_id | float | in Bytes/sec |
 | smi_get_device_compute_process | get list of pid of processes running on the system | None | List[int] |  |
 | smi_get_device_average_power | get device's average power | device_id | float | power in Watt |
+| smi_get_device_xgmi_error_status | get XGMI error status for the device | device_id | int |  |
+| smi_reset_device_xgmi_error | get device's average power | device_id | float | power in Watt |
+| smi_get_device_compute_partition | get device's compute partition | device_id | str | e.g. 'SPX', 'CPX' |
+| smi_get_device_memory_partition | get device's memory partition | device_id | str | e.g. 'NPS1' |
+| smi_get_device_link_type | gets hops and types of link between two devices | (device_id, device_id) | (int, int) | (n_hops, type) |
+| smi_get_device_uuid | gets UUID of the device | (device_id, format) | str | default with 'GPU-' prefix |
