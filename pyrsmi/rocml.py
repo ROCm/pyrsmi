@@ -433,7 +433,7 @@ def smi_get_device_pci_id(dev):
 def smi_get_device_topo_numa_affinity(dev):
     """returns the NUMA node associated with the device"""
     numa_node = c_uint32()
-    ret = reocm_lib.rsmi_topo_numa_affinity_get(dev, byref(numa_node))
+    ret = rocm_lib.rsmi_topo_numa_affinity_get(dev, byref(numa_node))
     return numa_node.value if rsmi_ret_ok(ret) else -1
 
 
