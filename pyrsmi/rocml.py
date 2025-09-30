@@ -601,3 +601,51 @@ def smi_get_device_uuid(dev, format='roc'):
         return nv_fmt % tuple(b_a)
     else:
         raise ValueError(f'Invalid format: \'{format}\'; use \'roc\' or \'nv\'')
+
+
+def smi_get_process_gpu_mapping():
+    """returns a dictionary mapping process IDs to lists of GPU device indices they are using
+
+    Returns:
+        dict: Dictionary with PID as key and list of GPU device indices as values
+             Example: {1234: [0], 5678: [0, 1]}
+    """
+    pid_gpu_map = {}
+
+    # Get all compute processes first
+    pids = smi_get_device_compute_process()
+    if not pids:
+        return pid_gpu_map
+
+    # Check if the function is available
+    try:
+        rsmi_compute_process_gpus_get = _rocml_get_function_ptr('rsmi_compute_process_gpus_get')
+    except ROCMLError_FunctionNotFound:
+        logging.error("rsmi_compute_process_gpus_get function not found in ROCm library")
+        return pid_gpu_map
+
+    # For each PID, get the GPUs it's using
+    max_devices = smi_get_device_count()
+    if max_devices <= 0:
+        return pid_gpu_map
+
+    for pid in pids:
+        try:
+            # Allocate buffer for device indices (use max possible devices)
+            dv_indices = (c_uint32 * max_devices)()
+            num_devices = c_uint32(max_devices)
+
+            # Call to get the actual device indices
+            ret = rsmi_compute_process_gpus_get(pid, dv_indices, byref(num_devices))
+
+            if rsmi_ret_ok(ret) and num_devices.value > 0:
+                # Convert to Python list
+                gpu_devices = [dv_indices[i] for i in range(num_devices.value)]
+                pid_gpu_map[pid] = gpu_devices
+            elif not rsmi_ret_ok(ret):
+                logging.warning(f"Failed to get GPU devices for PID {pid}")
+        except Exception as e:
+            logging.error(f"Error getting GPU mapping for PID {pid}: {e}")
+            continue
+
+    return pid_gpu_map
