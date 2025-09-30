@@ -34,11 +34,17 @@
     ```
 - Running in python:
     ```python
-    from pyrsmi import rocml
+from pyrsmi import rocml
 
-    rocml.smi_initialize()
-    print(rocml.smi_get_device_count())
-    rocml.smi_shutdown()
+rocml.smi_initialize()
+print(rocml.smi_get_device_count())
+
+# Get PID-to-GPU mapping
+pid_gpu_map = rocml.smi_get_process_gpu_mapping()
+print(f"Processes using GPUs: {pid_gpu_map}")
+# Example output: {1234: [0], 5678: [0, 1]}
+
+rocml.smi_shutdown()
     ```
 
 ## Examples
@@ -73,3 +79,4 @@
 | smi_get_device_memory_partition | get device's memory partition | device_id | str | e.g. 'NPS1' |
 | smi_get_device_link_type | gets hops and types of link between two devices | (device_id, device_id) | (int, int) | (n_hops, type) |
 | smi_get_device_uuid | gets UUID of the device | (device_id, format) | str | default with 'GPU-' prefix |
+| smi_get_process_gpu_mapping | gets mapping of process IDs to GPU devices | None | dict | {pid: [gpu_indices]} |
