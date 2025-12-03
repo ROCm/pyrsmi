@@ -1,11 +1,11 @@
-# LLM Inference Monitoring Example
+# LLM Inference Monitoring Examples
 
-This example demonstrates how to use `pyrsmi` to monitor GPU metrics during LLM inference workloads.
+These examples demonstrate how to use `pyrsmi` package to monitor GPU metrics during LLM inference workloads.
 
 ## Examples Included
 
+1. **`simple_workload_monitor.py`** - Quick test with simple GPU workload with pytorch (no LLM needed)
 1. **`monitor_llm_inference.py`** - Monitor GPU during LLM inference (requires transformers)
-2. **`simple_workload_monitor.py`** - Quick test with simple GPU workload (no LLM needed)
 
 ## Features
 
@@ -38,18 +38,28 @@ docker run -it --rm \
   rocm/pytorch:latest
 
 # Inside container, install dependencies
+# Note: amdsmi is usually pre-installed in ROCm containers
 pip install transformers accelerate pyrsmi
 ```
 
-### Method 2: Install ROCm PyTorch via pip
+> **Note:** ROCm PyTorch containers include the `amdsmi` Python package pre-installed, which ensures correct GPU detection and device naming.
+
+### Method 2: Install ROCm PyTorch via pip (Bare Metal)
 
 ```bash
 # Install ROCm-compatible PyTorch
 pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/rocm6.1
 
+# Install amdsmi package (strongly recommended for correct device names)
+cp -r /opt/rocm/share/amd_smi /tmp/amd_smi_install
+pip install /tmp/amd_smi_install/
+rm -rf /tmp/amd_smi_install
+
 # Then install other dependencies
 pip install transformers accelerate pyrsmi
 ```
+
+> **Why amdsmi?** Without the `amdsmi` package, device names may show as generic "AMD Radeon Graphics" instead of the correct model name (e.g., "AMD Instinct MI350X").
 
 ### For Testing Only (Simple Workload)
 
@@ -57,6 +67,9 @@ If you just want to test monitoring without GPU workload:
 
 ```bash
 pip install pyrsmi  # Monitoring works without PyTorch
+
+# For correct device names, also install amdsmi:
+pip install amdsmi  # Or install from /opt/rocm/share/amd_smi
 ```
 
 ## Quick Start

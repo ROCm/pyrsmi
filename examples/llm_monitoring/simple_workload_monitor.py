@@ -23,8 +23,7 @@
 """
 Simple GPU Workload Monitor
 
-A lightweight example that monitors GPU metrics during a simple PyTorch workload.
-No LLM models required - just demonstrates the monitoring capabilities.
+A lightweight example that monitors GPU metrics during a simple PyTorch workload without LLM models.
 
 Requirements:
     pip install torch pyrsmi
@@ -65,7 +64,7 @@ def run_simple_workload(duration: float = 5.0, device: int = 0):
         
         while time.time() - start_time < duration:
             # Create random matrices and perform operations
-            size = 4000
+            size = 16000
             a = torch.randn(size, size, device=device_obj, dtype=torch.float32)
             b = torch.randn(size, size, device=device_obj, dtype=torch.float32)
             

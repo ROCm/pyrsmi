@@ -306,6 +306,15 @@ class amdsmi_link_type_t(c_int):
     AMDSMI_LINK_TYPE_UNKNOWN = 4
 
 
+# amdsmi processor types (for amdsmi_get_processor_handles_by_type)
+class amdsmi_processor_type_t(c_int):
+    AMDSMI_PROCESSOR_TYPE_UNKNOWN = 0
+    AMDSMI_PROCESSOR_TYPE_AMD_GPU = 1
+    AMDSMI_PROCESSOR_TYPE_AMD_CPU = 2
+    AMDSMI_PROCESSOR_TYPE_NON_AMD_GPU = 3
+    AMDSMI_PROCESSOR_TYPE_NON_AMD_CPU = 4
+
+
 # amdsmi card form factors
 class amdsmi_card_form_factor_t(c_int):
     AMDSMI_CARD_FORM_FACTOR_PCIE = 0
@@ -468,6 +477,35 @@ def _rocml_get_function_ptr(name):
         lib_load_lock.release()
 
 
+def _suppress_stderr():
+    """Context manager to suppress stderr output from C libraries.
+    
+    This is used to suppress messages like:
+    "/opt/amdgpu/share/libdrm/amdgpu.ids: No such file or directory"
+    which come from libdrm during initialization.
+    """
+    import contextlib
+    
+    @contextlib.contextmanager
+    def suppress():
+        # Save the original stderr file descriptor
+        stderr_fd = sys.stderr.fileno()
+        try:
+            # Duplicate stderr fd so we can restore it later
+            stderr_dup = os.dup(stderr_fd)
+            # Open /dev/null and redirect stderr to it
+            devnull = os.open(os.devnull, os.O_WRONLY)
+            os.dup2(devnull, stderr_fd)
+            os.close(devnull)
+            yield
+        finally:
+            # Restore original stderr
+            os.dup2(stderr_dup, stderr_fd)
+            os.close(stderr_dup)
+    
+    return suppress()
+
+
 def _load_rocm_library():
     """Load AMD SMI library (amdsmi) if not already loaded"""
     global rocm_lib
@@ -489,8 +527,10 @@ def _load_rocm_library():
                                 f'AMD SMI library ({LIBROCM_NAME}) not found. '
                                 'Please ensure ROCm is installed and ROCM_PATH is set correctly.'
                             )
-                        cdll.LoadLibrary(path_librocm)
-                        rocm_lib = CDLL(path_librocm)
+                        # Suppress stderr to hide libdrm warnings about missing amdgpu.ids
+                        with _suppress_stderr():
+                            cdll.LoadLibrary(path_librocm)
+                            rocm_lib = CDLL(path_librocm)
                 except OSError as e:
                     raise ROCMLError_LibraryNotFound(f'AMD SMI library not found: {e}')
                 if rocm_lib == None:
@@ -536,6 +576,11 @@ def _init_processor_handles():
     This function discovers all AMD GPU processors and stores their handles
     for use by the rest of the API. It maintains backward compatibility by
     allowing device indices to be used, which are mapped to handles internally.
+    
+    Tries three approaches in order:
+    1. Native amdsmi Python package (if available, best for containers)
+    2. amdsmi_get_processor_handles_by_type (ctypes, preferred)
+    3. Socket-based enumeration (fallback for older amdsmi versions)
     """
     global _processor_handles, _handle_initialized
     
@@ -544,26 +589,172 @@ def _init_processor_handles():
     
     _processor_handles = []
     
+    # Try the native amdsmi Python package first (best for containers)
+    if _init_processor_handles_via_amdsmi_package():
+        _handle_initialized = True
+        logging.info(f'Initialized {len(_processor_handles)} GPU processor handles (via amdsmi package)')
+        return
+    
+    # Try the newer amdsmi_get_processor_handles_by_type API
+    if _init_processor_handles_by_type():
+        _handle_initialized = True
+        logging.info(f'Initialized {len(_processor_handles)} GPU processor handles (by type)')
+        return
+    
+    # Fallback to socket-based enumeration
+    logging.debug('Falling back to socket-based processor enumeration')
+    if _init_processor_handles_by_socket():
+        _handle_initialized = True
+        logging.info(f'Initialized {len(_processor_handles)} GPU processor handles (by socket)')
+        return
+    
+    logging.warning('No AMD GPU processors found')
+
+
+def _init_processor_handles_via_amdsmi_package():
+    """Initialize processor handles using the native amdsmi Python package.
+    
+    This is the preferred method for containerized environments where the
+    amdsmi Python package is installed. It's a first-party AMD package that
+    handles GPU discovery correctly in containers.
+    
+    @return: True if successful and found at least one GPU, False otherwise
+    """
+    global _processor_handles
+    
+    try:
+        # Try to import the native amdsmi package
+        import amdsmi
+        
+        # Initialize amdsmi
+        try:
+            amdsmi.amdsmi_init()
+        except Exception as e:
+            logging.debug(f'amdsmi.amdsmi_init() failed: {e}')
+            return False
+        
+        # Get GPU processor handles
+        try:
+            # Try to get processors by type (AMD GPU)
+            gpu_handles = amdsmi.amdsmi_get_processor_handles()
+            
+            if not gpu_handles:
+                logging.debug('amdsmi package returned no GPU handles')
+                return False
+            
+            # Store the handles - these are already amdsmi handle objects
+            # We'll store them and use the amdsmi package for queries
+            for handle in gpu_handles:
+                _processor_handles.append(handle)
+            
+            # Mark that we're using the amdsmi package mode
+            global _using_amdsmi_package
+            _using_amdsmi_package = True
+            
+            return True
+            
+        except Exception as e:
+            logging.debug(f'Failed to get GPU handles via amdsmi package: {e}')
+            return False
+            
+    except ImportError:
+        logging.debug('Native amdsmi Python package not available')
+        return False
+    except Exception as e:
+        logging.debug(f'Exception in _init_processor_handles_via_amdsmi_package: {e}')
+        return False
+
+
+# Flag to track if we're using the amdsmi Python package
+_using_amdsmi_package = False
+
+
+def _init_processor_handles_by_type():
+    """Initialize processor handles using amdsmi_get_processor_handles_by_type.
+    
+    This is the preferred method as it works better in containerized environments
+    where socket-based enumeration may fail.
+    
+    @return: True if successful and found at least one GPU, False otherwise
+    """
+    global _processor_handles
+    
+    try:
+        # Check if the function exists in the library
+        try:
+            get_by_type_func = rocm_lib.amdsmi_get_processor_handles_by_type
+        except AttributeError:
+            logging.debug('amdsmi_get_processor_handles_by_type not available')
+            return False
+        
+        # First call to get count
+        processor_count = c_uint32(0)
+        ret = get_by_type_func(
+            amdsmi_processor_type_t.AMDSMI_PROCESSOR_TYPE_AMD_GPU,
+            None,
+            byref(processor_count)
+        )
+        
+        if ret != amdsmi_status_t.AMDSMI_STATUS_SUCCESS:
+            logging.debug(f'amdsmi_get_processor_handles_by_type count failed: {ret}')
+            return False
+        
+        if processor_count.value == 0:
+            logging.debug('No AMD GPU processors found via by_type API')
+            return False
+        
+        # Allocate processor handles array
+        proc_handles = (amdsmi_processor_handle * processor_count.value)()
+        
+        # Second call to get actual handles
+        ret = get_by_type_func(
+            amdsmi_processor_type_t.AMDSMI_PROCESSOR_TYPE_AMD_GPU,
+            proc_handles,
+            byref(processor_count)
+        )
+        
+        if ret == amdsmi_status_t.AMDSMI_STATUS_SUCCESS:
+            for i in range(processor_count.value):
+                _processor_handles.append(proc_handles[i])
+            return True
+        else:
+            logging.debug(f'amdsmi_get_processor_handles_by_type failed: {ret}')
+            return False
+            
+    except Exception as e:
+        logging.debug(f'Exception in _init_processor_handles_by_type: {e}')
+        return False
+
+
+def _init_processor_handles_by_socket():
+    """Initialize processor handles using socket-based enumeration.
+    
+    This is the fallback method for older amdsmi versions.
+    
+    @return: True if successful and found at least one GPU, False otherwise
+    """
+    global _processor_handles
+    
     try:
         # Get socket count first
         socket_count = c_uint32(0)
         ret = rocm_lib.amdsmi_get_socket_handles(byref(socket_count), None)
         
-        if not amdsmi_ret_ok(ret):
+        if ret != amdsmi_status_t.AMDSMI_STATUS_SUCCESS:
             logging.warning('Failed to get socket count')
-            return
+            return False
         
         if socket_count.value == 0:
             logging.warning('No sockets found')
-            return
+            return False
         
         # Allocate socket handles array
         socket_handles = (amdsmi_socket_handle * socket_count.value)()
         ret = rocm_lib.amdsmi_get_socket_handles(byref(socket_count), socket_handles)
         
-        if not amdsmi_ret_ok(ret):
+        if ret != amdsmi_status_t.AMDSMI_STATUS_SUCCESS:
             logging.error('Failed to get socket handles')
-            return
+            return False
         
         # For each socket, get processor handles
         for i in range(socket_count.value):
@@ -576,12 +767,13 @@ def _init_processor_handles():
                 None
             )
             
-            if not amdsmi_ret_ok(ret):
-                logging.warning(f'Failed to get processor count for socket {i}')
+            if ret != amdsmi_status_t.AMDSMI_STATUS_SUCCESS:
+                # This is expected for CPU sockets - just skip silently
+                logging.debug(f'Socket {i}: Not a GPU socket or no processors')
                 continue
             
             if processor_count.value == 0:
-                logging.warning(f'No processors found on socket {i}')
+                logging.debug(f'Socket {i}: No processors found')
                 continue
             
             # Allocate processor handles array
@@ -594,22 +786,21 @@ def _init_processor_handles():
                 proc_handles
             )
             
-            if amdsmi_ret_ok(ret):
+            if ret == amdsmi_status_t.AMDSMI_STATUS_SUCCESS:
                 # Add GPU handles to our list
                 for j in range(processor_count.value):
                     _processor_handles.append(proc_handles[j])
                 logging.info(f'Socket {i}: Found {processor_count.value} processors')
             else:
-                logging.warning(f'Failed to get processor handles for socket {i}')
+                logging.debug(f'Socket {i}: Failed to get processor handles')
         
-        _handle_initialized = True
-        logging.info(f'Initialized {len(_processor_handles)} total processor handles')
+        return len(_processor_handles) > 0
         
     except Exception as e:
-        logging.error(f'Exception during processor handle initialization: {e}')
+        logging.error(f'Exception during socket-based processor enumeration: {e}')
         import traceback
         traceback.print_exc()
-        _processor_handles = []
+        return False
 
 
 def _get_processor_handle(device_index):
@@ -636,14 +827,55 @@ def smi_initialize():
     This function initializes the amdsmi library and discovers all AMD GPU
     processors in the system. After initialization, GPU devices can be accessed
     using device indices (0, 1, 2, ...) as before.
+    
+    Supports two modes:
+    1. Native amdsmi Python package (preferred for containers)
+    2. Direct ctypes interface to libamd_smi.so
     """
+    global _using_amdsmi_package
+    
+    # First, try to use the native amdsmi Python package
+    # This is the preferred path for containerized environments
+    try:
+        import amdsmi
+        try:
+            # Suppress stderr to hide libdrm warnings about missing amdgpu.ids
+            with _suppress_stderr():
+                amdsmi.amdsmi_init()
+            # If amdsmi package init succeeded, try to get handles
+            _init_processor_handles()
+            if len(_processor_handles) > 0:
+                # Success! Using amdsmi package
+                global _rocm_lib_refcount
+                lib_load_lock.acquire()
+                _rocm_lib_refcount += 1
+                lib_load_lock.release()
+                return
+            else:
+                # amdsmi package init worked but no GPUs found
+                # Fall through to try ctypes approach
+                logging.debug('amdsmi package found no GPUs, trying ctypes approach')
+                try:
+                    amdsmi.amdsmi_shut_down()
+                except:
+                    pass
+                _using_amdsmi_package = False
+        except Exception as e:
+            logging.debug(f'amdsmi package init failed: {e}')
+            _using_amdsmi_package = False
+    except ImportError:
+        logging.debug('Native amdsmi Python package not available, using ctypes')
+    
+    # Fall back to ctypes approach
     _load_rocm_library()
 
     if not _driver_initialized():
         raise RuntimeError('AMD GPU driver not initialized. Please ensure amdgpu driver is loaded.')
 
     # Initialize amdsmi with AMD GPU flag
-    ret_init = rocm_lib.amdsmi_init(amdsmi_init_flags_t.AMDSMI_INIT_AMD_GPUS)
+    # Suppress stderr to hide libdrm warnings about missing amdgpu.ids
+    with _suppress_stderr():
+        ret_init = rocm_lib.amdsmi_init(amdsmi_init_flags_t.AMDSMI_INIT_AMD_GPUS)
     
     if ret_init != amdsmi_status_t.AMDSMI_STATUS_SUCCESS:
         err_msg = amdsmi_status_verbose_err_out.get(ret_init, f'Unknown error: {ret_init}')
@@ -657,7 +889,6 @@ def smi_initialize():
         logging.warning('No AMD GPU processors found')
 
     # Update reference count
-    global _rocm_lib_refcount
     lib_load_lock.acquire()
     _rocm_lib_refcount += 1
     lib_load_lock.release()
@@ -703,15 +934,23 @@ def smi_shutdown():
     Cleans up processor handles and shuts down the amdsmi library.
     The library remains loaded but the interface is shut down.
     """
-    global _processor_handles, _handle_initialized
+    global _processor_handles, _handle_initialized, _using_amdsmi_package
     
     # Shutdown amdsmi
-    ret = rocm_lib.amdsmi_shut_down()
-    amdsmi_ret_ok(ret)
+    if _using_amdsmi_package:
+        try:
+            import amdsmi
+            amdsmi.amdsmi_shut_down()
+        except Exception as e:
+            logging.debug(f'amdsmi package shutdown failed: {e}')
+    else:
+        ret = rocm_lib.amdsmi_shut_down()
+        amdsmi_ret_ok(ret)
     
     # Clear processor handles
     _processor_handles = []
     _handle_initialized = False
+    _using_amdsmi_package = False
 
     # Update reference count
     global _rocm_lib_refcount
@@ -736,6 +975,18 @@ def smi_get_device_id(dev):
     """
     try:
         handle = _get_processor_handle(dev)
+        
+        # Use amdsmi package if available
+        if _using_amdsmi_package:
+            try:
+                import amdsmi
+                asic_info = amdsmi.amdsmi_get_gpu_asic_info(handle)
+                return asic_info.get('device_id', -1)
+            except Exception as e:
+                logging.debug(f'amdsmi package get_gpu_asic_info failed: {e}')
+                return -1
+        
+        # Fallback to ctypes
         asic_info = amdsmi_asic_info_t()
         ret = rocm_lib.amdsmi_get_gpu_asic_info(handle, byref(asic_info))
         
@@ -771,6 +1022,18 @@ def smi_get_device_name(dev):
     """
     try:
         handle = _get_processor_handle(dev)
+        
+        # Use amdsmi package if available
+        if _using_amdsmi_package:
+            try:
+                import amdsmi
+                asic_info = amdsmi.amdsmi_get_gpu_asic_info(handle)
+                return asic_info.get('market_name', '') or ''
+            except Exception as e:
+                logging.debug(f'amdsmi package get_gpu_asic_info failed: {e}')
+                return ''
+        
+        # Fallback to ctypes
         asic_info = amdsmi_asic_info_t()
         ret = rocm_lib.amdsmi_get_gpu_asic_info(handle, byref(asic_info))
         
@@ -835,6 +1098,19 @@ def smi_get_device_utilization(dev):
     """
     try:
         handle = _get_processor_handle(dev)
+        
+        # Use amdsmi package if available
+        if _using_amdsmi_package:
+            try:
+                import amdsmi
+                activity = amdsmi.amdsmi_get_gpu_activity(handle)
+                # activity is a dict with gfx_activity, umc_activity, mm_activity
+                return activity.get('gfx_activity', -1)
+            except Exception as e:
+                logging.debug(f'amdsmi package get_gpu_activity failed: {e}')
+                return -1
+        
+        # Fallback to ctypes
         engine_usage = amdsmi_engine_usage_t()
         ret = rocm_lib.amdsmi_get_gpu_activity(handle, byref(engine_usage))
         
@@ -861,6 +1137,25 @@ def smi_get_device_memory_used(dev, type='VRAM'):
         handle = _get_processor_handle(dev)
         type_idx = memory_type_l.index(type)
         
+        # Use amdsmi package if available
+        if _using_amdsmi_package:
+            try:
+                import amdsmi
+                # Map type to amdsmi enum
+                if type_idx == 0:
+                    mem_type = amdsmi.AmdSmiMemoryType.VRAM
+                elif type_idx == 1:
+                    mem_type = amdsmi.AmdSmiMemoryType.VIS_VRAM
+                elif type_idx == 2:
+                    mem_type = amdsmi.AmdSmiMemoryType.GTT
+                else:
+                    return -1
+                return amdsmi.amdsmi_get_gpu_memory_usage(handle, mem_type)
+            except Exception as e:
+                logging.debug(f'amdsmi package get_gpu_memory_usage failed: {e}')
+                return -1
+        
+        # Fallback to ctypes
         # Map to amdsmi memory type
         if type_idx == 0:
             mem_type = amdsmi_memory_type_t.AMDSMI_MEM_TYPE_VRAM
@@ -897,6 +1192,25 @@ def smi_get_device_memory_total(dev, type='VRAM'):
         handle = _get_processor_handle(dev)
         type_idx = memory_type_l.index(type)
         
+        # Use amdsmi package if available
+        if _using_amdsmi_package:
+            try:
+                import amdsmi
+                # Map type to amdsmi enum
+                if type_idx == 0:
+                    mem_type = amdsmi.AmdSmiMemoryType.VRAM
+                elif type_idx == 1:
+                    mem_type = amdsmi.AmdSmiMemoryType.VIS_VRAM
+                elif type_idx == 2:
+                    mem_type = amdsmi.AmdSmiMemoryType.GTT
+                else:
+                    return -1
+                return amdsmi.amdsmi_get_gpu_memory_total(handle, mem_type)
+            except Exception as e:
+                logging.debug(f'amdsmi package get_gpu_memory_total failed: {e}')
+                return -1
+        
+        # Fallback to ctypes
         # Map to amdsmi memory type
         if type_idx == 0:
             mem_type = amdsmi_memory_type_t.AMDSMI_MEM_TYPE_VRAM
@@ -931,6 +1245,19 @@ def smi_get_device_memory_busy(dev):
     """
     try:
         handle = _get_processor_handle(dev)
+        
+        # Use amdsmi package if available
+        if _using_amdsmi_package:
+            try:
+                import amdsmi
+                activity = amdsmi.amdsmi_get_gpu_activity(handle)
+                # activity is a dict with gfx_activity, umc_activity, mm_activity
+                return activity.get('umc_activity', -1)
+            except Exception as e:
+                logging.debug(f'amdsmi package get_gpu_activity failed: {e}')
+                return -1
+        
+        # Fallback to ctypes
         engine_usage = amdsmi_engine_usage_t()
         ret = rocm_lib.amdsmi_get_gpu_activity(handle, byref(engine_usage))
         
@@ -1354,6 +1681,30 @@ def smi_get_device_average_power(dev):
     """
     try:
         handle = _get_processor_handle(dev)
+        
+        # Use amdsmi package if available
+        if _using_amdsmi_package:
+            try:
+                import amdsmi
+                power_info = amdsmi.amdsmi_get_power_info(handle)
+                # power_info is a dict with power values
+                # Try current first (MI300+), fallback to average
+                current = power_info.get('current_socket_power', 0)
+                average = power_info.get('average_socket_power', 0)
+                socket = power_info.get('socket_power', 0)
+                if current and current > 0:
+                    return float(current)
+                elif average and average > 0:
+                    return float(average)
+                elif socket and socket > 0:
+                    return float(socket)
+                else:
+                    return -1
+            except Exception as e:
+                logging.debug(f'amdsmi package get_power_info failed: {e}')
+                return -1
+        
+        # Fallback to ctypes
         power_info = amdsmi_power_info_t()
         ret = rocm_lib.amdsmi_get_power_info(handle, byref(power_info))
         
