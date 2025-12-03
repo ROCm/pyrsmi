@@ -943,7 +943,8 @@ def smi_shutdown():
             amdsmi.amdsmi_shut_down()
         except Exception as e:
             logging.debug(f'amdsmi package shutdown failed: {e}')
-    else:
+    elif rocm_lib is not None:
+        # Only call if library was loaded (ctypes mode)
         ret = rocm_lib.amdsmi_shut_down()
         amdsmi_ret_ok(ret)
     
@@ -981,7 +982,14 @@ def smi_get_device_id(dev):
             try:
                 import amdsmi
                 asic_info = amdsmi.amdsmi_get_gpu_asic_info(handle)
-                return asic_info.get('device_id', -1)
+                device_id = asic_info.get('device_id', -1)
+                # amdsmi package returns device_id as hex string like '0x75a0'
+                if isinstance(device_id, str):
+                    try:
+                        return int(device_id, 16) if device_id.startswith('0x') else int(device_id)
+                    except ValueError:
+                        return -1
+                return device_id
             except Exception as e:
                 logging.debug(f'amdsmi package get_gpu_asic_info failed: {e}')
                 return -1
@@ -1055,6 +1063,25 @@ def smi_get_device_revision(dev):
     """
     try:
         handle = _get_processor_handle(dev)
+        
+        # Use amdsmi package if available
+        if _using_amdsmi_package:
+            try:
+                import amdsmi
+                asic_info = amdsmi.amdsmi_get_gpu_asic_info(handle)
+                rev_id = asic_info.get('rev_id', -1)
+                # amdsmi package returns rev_id as hex string like '0x00'
+                if isinstance(rev_id, str):
+                    try:
+                        return int(rev_id, 16) if rev_id.startswith('0x') else int(rev_id)
+                    except ValueError:
+                        return -1
+                return rev_id
+            except Exception as e:
+                logging.debug(f'amdsmi package get_gpu_asic_info failed: {e}')
+                return -1
+        
+        # Fallback to ctypes
         asic_info = amdsmi_asic_info_t()
         ret = rocm_lib.amdsmi_get_gpu_asic_info(handle, byref(asic_info))
         
@@ -1077,6 +1104,36 @@ def smi_get_device_unique_id(dev):
     """
     try:
         handle = _get_processor_handle(dev)
+        
+        # Use amdsmi package if available
+        if _using_amdsmi_package:
+            try:
+                import amdsmi
+                bdf_info = amdsmi.amdsmi_get_gpu_device_bdf(handle)
+                # bdf_info is a dict like {'domain': '0000', 'bus': 'c1', 'device': '00', 'function': '0'}
+                # or could be a BDF string like "0000:c1:00.0"
+                if isinstance(bdf_info, dict):
+                    domain = int(bdf_info.get('domain', '0'), 16)
+                    bus = int(bdf_info.get('bus', '0'), 16)
+                    device = int(bdf_info.get('device', '0'), 16)
+                    function = int(bdf_info.get('function', '0'), 16)
+                    # Encode as 64-bit: domain(32) | bus(8) | device(5) | function(3)
+                    return ((domain & 0xFFFFFFFF) << 32) | ((bus & 0xFF) << 8) | ((device & 0x1F) << 3) | (function & 0x7)
+                elif isinstance(bdf_info, str):
+                    # Parse BDF string like "0000:c1:00.0"
+                    parts = bdf_info.replace('.', ':').split(':')
+                    if len(parts) >= 4:
+                        domain = int(parts[0], 16)
+                        bus = int(parts[1], 16)
+                        device = int(parts[2], 16)
+                        function = int(parts[3], 16)
+                        return ((domain & 0xFFFFFFFF) << 32) | ((bus & 0xFF) << 8) | ((device & 0x1F) << 3) | (function & 0x7)
+                return -1
+            except Exception as e:
+                logging.debug(f'amdsmi package get_gpu_device_bdf failed: {e}')
+                return -1
+        
+        # Fallback to ctypes
         bdf = amdsmi_bdf_t()
         ret = rocm_lib.amdsmi_get_gpu_device_bdf(handle, byref(bdf))
         
@@ -1374,6 +1431,31 @@ def smi_get_device_fan_speed_max(dev, index = 0):
         return -1
 
 # PCIE functions
+class _AmdSmiPcieInfoWrapper:
+    """Wrapper to provide consistent interface for PCIe info from amdsmi package.
+    
+    Mimics the structure of amdsmi_pcie_info_t for compatibility with existing code.
+    """
+    def __init__(self, pcie_dict):
+        self._data = pcie_dict
+        self.pcie_static = self._StaticWrapper(pcie_dict)
+        self.pcie_metric = self._MetricWrapper(pcie_dict)
+    
+    class _StaticWrapper:
+        def __init__(self, data):
+            self.max_pcie_width = data.get('pcie_static', {}).get('max_pcie_width', 0)
+            self.max_pcie_speed = data.get('pcie_static', {}).get('max_pcie_speed', 0)
+            self.pcie_interface_version = data.get('pcie_static', {}).get('pcie_interface_version', 0)
+            self.slot_type = data.get('pcie_static', {}).get('slot_type', 0)
+    
+    class _MetricWrapper:
+        def __init__(self, data):
+            self.pcie_width = data.get('pcie_metric', {}).get('pcie_width', 0)
+            self.pcie_speed = data.get('pcie_metric', {}).get('pcie_speed', 0)
+            self.pcie_bandwidth = data.get('pcie_metric', {}).get('pcie_bandwidth', 0)
+            self.pcie_replay_count = data.get('pcie_metric', {}).get('pcie_replay_count', 0)
+
+
 def smi_get_device_pcie_bandwidth(dev):
     """Returns PCIe bandwidth information for the device.
     
@@ -1381,10 +1463,23 @@ def smi_get_device_pcie_bandwidth(dev):
     Returns the amdsmi_pcie_info_t structure with static and metric data.
     
     @param dev: Device index (0-based)
-    @return: amdsmi_pcie_info_t structure, or -1 on error
+    @return: amdsmi_pcie_info_t structure (or compatible wrapper), or -1 on error
     """
     try:
         handle = _get_processor_handle(dev)
+        
+        # Use amdsmi package if available
+        if _using_amdsmi_package:
+            try:
+                import amdsmi
+                pcie_info = amdsmi.amdsmi_get_pcie_info(handle)
+                # Wrap the dictionary in a compatible object
+                return _AmdSmiPcieInfoWrapper(pcie_info)
+            except Exception as e:
+                logging.debug(f'amdsmi package get_pcie_info failed: {e}')
+                return -1
+        
+        # Fallback to ctypes
         pcie_info = amdsmi_pcie_info_t()
         ret = rocm_lib.amdsmi_get_pcie_info(handle, byref(pcie_info))
         
@@ -1409,6 +1504,13 @@ def smi_get_device_pci_id(dev):
     """
     try:
         handle = _get_processor_handle(dev)
+        
+        # Use amdsmi package if available - delegate to smi_get_device_unique_id
+        # which has the same functionality
+        if _using_amdsmi_package:
+            return smi_get_device_unique_id(dev)
+        
+        # Fallback to ctypes
         bdf = amdsmi_bdf_t()
         ret = rocm_lib.amdsmi_get_gpu_device_bdf(handle, byref(bdf))
         
@@ -1756,6 +1858,58 @@ B6 = B1 * 6
 nv_fmt = f'GPU-{B4}-{B2}-{B2}-{B2}-{B6}'
 
 # UUID function
+def _format_uuid_string(uuid_str, format):
+    """Helper to format UUID string in the requested format.
+    
+    @param uuid_str: Raw UUID string (may or may not have GPU- prefix)
+    @param format: Output format - 'roc', 'raw', or 'nv'
+    @return: Formatted UUID string
+    """
+    if format == 'roc':
+        # ROCm format: GPU-<uuid>
+        if uuid_str.startswith('GPU-'):
+            return uuid_str
+        else:
+            return f'GPU-{uuid_str}'
+    elif format == 'raw':
+        # Raw UUID without prefix
+        if uuid_str.startswith('GPU-'):
+            return uuid_str[4:]
+        else:
+            return uuid_str
+    elif format == 'nv':
+        # NVIDIA-style format: GPU-<8hex>-<4hex>-<4hex>-<4hex>-<12hex>
+        # Get raw UUID (without GPU- prefix)
+        raw_uuid = uuid_str[4:] if uuid_str.startswith('GPU-') else uuid_str
+        # UUID is already in format "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+        # Just add GPU- prefix for NVIDIA format
+        return f'GPU-{raw_uuid}'
+    else:
+        raise ValueError(f'Invalid format: \'{format}\'; use \'roc\', \'raw\', or \'nv\'')
+
+
+def _format_bdf_as_uuid(bdf_id, format):
+    """Helper to format BDF ID as a pseudo-UUID.
+    
+    @param bdf_id: BDF ID as 64-bit integer
+    @param format: Output format - 'roc', 'raw', or 'nv'
+    @return: Formatted UUID string
+    """
+    # Format BDF as a hex string (pseudo-UUID)
+    bdf_hex = f'{bdf_id:032x}'
+    
+    if format == 'roc':
+        return f'GPU-{bdf_hex}'
+    elif format == 'raw':
+        return bdf_hex
+    elif format == 'nv':
+        # NVIDIA-style format from BDF hex: GPU-<8>-<4>-<4>-<4>-<12>
+        # Format the 32-char hex string as UUID
+        return f'GPU-{bdf_hex[:8]}-{bdf_hex[8:12]}-{bdf_hex[12:16]}-{bdf_hex[16:20]}-{bdf_hex[20:32]}'
+    else:
+        raise ValueError(f'Invalid format: \'{format}\'; use \'roc\', \'raw\', or \'nv\'')
+
+
 def smi_get_device_uuid(dev, format='roc'):
     """Returns the UUID of the device.
     
@@ -1768,9 +1922,25 @@ def smi_get_device_uuid(dev, format='roc'):
     @return: UUID string in the requested format, or empty string on error
     """
     try:
-        # Try using amdsmi UUID API (may not be supported on all platforms)
         handle = _get_processor_handle(dev)
         
+        # Use amdsmi package if available
+        if _using_amdsmi_package:
+            try:
+                import amdsmi
+                uuid_str = amdsmi.amdsmi_get_gpu_device_uuid(handle)
+                if uuid_str:
+                    return _format_uuid_string(uuid_str, format)
+            except Exception as e:
+                logging.debug(f'amdsmi package get_gpu_device_uuid failed: {e}')
+            
+            # Fallback to BDF-based UUID for amdsmi package
+            bdf_id = smi_get_device_unique_id(dev)
+            if bdf_id != -1:
+                return _format_bdf_as_uuid(bdf_id, format)
+            return ''
+        
+        # Try using amdsmi UUID API via ctypes (may not be supported on all platforms)
         # Allocate a fixed-size buffer (UUIDs are typically 64 bytes or less)
         uuid_buffer = create_string_buffer(256)
         uuid_length = c_uint(256)
@@ -1779,29 +1949,7 @@ def smi_get_device_uuid(dev, format='roc'):
         
         if rsmi_ret_ok(ret):
             uuid_str = uuid_buffer.value.decode('utf-8').rstrip('\x00')
-            
-            # Return in requested format
-            if format == 'roc':
-                # ROCm format: GPU-<uuid>
-                if uuid_str.startswith('GPU-'):
-                    return uuid_str
-                else:
-                    return f'GPU-{uuid_str}'
-            elif format == 'raw':
-                # Raw UUID without prefix
-                if uuid_str.startswith('GPU-'):
-                    return uuid_str[4:]
-                else:
-                    return uuid_str
-            elif format == 'nv':
-                # NVIDIA-style format: GPU-<8hex>-<4hex>-<4hex>-<4hex>-<12hex>
-                # Get raw UUID (without GPU- prefix)
-                raw_uuid = uuid_str[4:] if uuid_str.startswith('GPU-') else uuid_str
-                # UUID is already in format "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
-                # Just add GPU- prefix for NVIDIA format
-                return f'GPU-{raw_uuid}'
-            else:
-                raise ValueError(f'Invalid format: \'{format}\'; use \'roc\', \'raw\', or \'nv\'')
+            return _format_uuid_string(uuid_str, format)
         
         # Fallback: Generate UUID from BDF (unique but not the same as HSA UUID)
         logging.warning(f'amdsmi_get_gpu_device_uuid not supported, using BDF-based ID for device {dev}')
@@ -1811,19 +1959,7 @@ def smi_get_device_uuid(dev, format='roc'):
             logging.error(f'Failed to get BDF-based unique ID for device {dev}')
             return ''
         
-        # Format BDF as a hex string (pseudo-UUID)
-        bdf_hex = f'{bdf_id:032x}'
-        
-        if format == 'roc':
-            return f'GPU-{bdf_hex}'
-        elif format == 'raw':
-            return bdf_hex
-        elif format == 'nv':
-            # NVIDIA-style format from BDF hex: GPU-<8>-<4>-<4>-<4>-<12>
-            # Format the 32-char hex string as UUID
-            return f'GPU-{bdf_hex[:8]}-{bdf_hex[8:12]}-{bdf_hex[12:16]}-{bdf_hex[16:20]}-{bdf_hex[20:32]}'
-        else:
-            raise ValueError(f'Invalid format: \'{format}\'; use \'roc\', \'raw\', or \'nv\'')
+        return _format_bdf_as_uuid(bdf_id, format)
     
     except Exception as e:
         logging.error(f'Error getting UUID for device {dev}: {e}')

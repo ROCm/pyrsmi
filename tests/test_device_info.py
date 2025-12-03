@@ -34,6 +34,25 @@ class TestDeviceName:
         assert isinstance(name, str)
         assert len(name) > 0
     
+    def test_device_name_not_generic(self, rocm_session, has_gpus, using_amdsmi_package):
+        """Test that device name is not generic when amdsmi package is used"""
+        if not has_gpus:
+            pytest.skip("No GPUs available")
+        
+        name = rocml.smi_get_device_name(0)
+        
+        if using_amdsmi_package:
+            # With amdsmi package, we should get proper device names
+            # Generic "AMD Radeon Graphics" suggests missing amdgpu.ids
+            if name == "AMD Radeon Graphics":
+                pytest.skip(
+                    "Device name is generic - amdgpu.ids may need updating. "
+                    "See MIGRATION.md troubleshooting section."
+                )
+            # Should contain AMD or Radeon or Instinct
+            assert any(x in name for x in ['AMD', 'Radeon', 'Instinct']), \
+                f"Device name '{name}' doesn't look like an AMD GPU name"
+    
     def test_device_name_all_devices(self, rocm_session, device_indices):
         """Test device names for all devices"""
         if not device_indices:

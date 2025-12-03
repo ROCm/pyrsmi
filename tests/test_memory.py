@@ -112,8 +112,9 @@ class TestMemoryReservedPages:
             pytest.skip("No GPUs available")
         
         result = rocml.smi_get_device_memory_reserved_pages(0)
-        # Should return tuple (num_pages, records) or -1
-        assert result != -1 or isinstance(result, tuple)
+        # Should return tuple (num_pages, records) or -1 on error/not supported
+        assert result == -1 or isinstance(result, tuple), \
+            f"Expected -1 or tuple, got {type(result)}: {result}"
         
         if result != -1:
             num_pages, records = result

@@ -6,6 +6,27 @@ import pytest
 from pyrsmi import rocml
 
 
+def _check_amdsmi_available():
+    """Check if the amdsmi Python package is available"""
+    try:
+        import amdsmi
+        return True
+    except ImportError:
+        return False
+
+
+@pytest.fixture(scope="session")
+def amdsmi_available():
+    """Check if amdsmi Python package is installed"""
+    return _check_amdsmi_available()
+
+
+@pytest.fixture(scope="session")
+def using_amdsmi_package(rocm_session):
+    """Check if pyrsmi is using the amdsmi Python package backend"""
+    return rocml._using_amdsmi_package
+
+
 @pytest.fixture(scope="session")
 def rocm_session():
     """Session-wide fixture to initialize and shutdown ROCm once for all tests"""
