@@ -564,7 +564,11 @@ def _driver_initialized():
     """
     initialized = ''
     try:
-        initialized = str(subprocess.check_output("cat /sys/module/amdgpu/initstate |grep live", shell=True))
+        initialized = str(subprocess.check_output(
+            "cat /sys/module/amdgpu/initstate |grep live", 
+            shell=True, 
+            stderr=subprocess.DEVNULL
+        ))
     except subprocess.CalledProcessError:
         pass
     return len(initialized) > 0
@@ -861,6 +865,10 @@ def smi_initialize():
                     pass
                 _using_amdsmi_package = False
         except Exception as e:
+            error_str = str(e)
+            # Check if driver is not loaded - no point trying ctypes fallback
+            if 'DRIVER_NOT_LOADED' in error_str or 'driver not loaded' in error_str.lower():
+                raise RuntimeError('AMD GPU driver not initialized. Please ensure amdgpu driver is loaded.') from None
             logging.debug(f'amdsmi package init failed: {e}')
             _using_amdsmi_package = False
     except ImportError:

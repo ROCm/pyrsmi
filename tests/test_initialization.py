@@ -3,6 +3,8 @@ Test core initialization and shutdown functionality (Phase 1)
 """
 
 import pytest
+import subprocess
+from unittest import mock
 from pyrsmi import rocml
 
 
@@ -151,4 +153,95 @@ class TestShutdown:
         assert rocml._handle_initialized is False
         assert len(rocml._processor_handles) == 0
         assert rocml._using_amdsmi_package is False
+
+
+@pytest.mark.unit
+class TestDriverInitialized:
+    """Test _driver_initialized() function - unit tests with mocking"""
+    
+    def test_driver_initialized_suppresses_stderr(self):
+        """Test that _driver_initialized() suppresses stderr output from subprocess
+        
+        This verifies the fix for the noisy 'cat: /sys/module/amdgpu/initstate: No such file'
+        message that was leaking to the terminal.
+        """
+        # Mock subprocess.check_output to verify stderr=DEVNULL is passed
+        with mock.patch('pyrsmi.rocml.subprocess.check_output') as mock_check_output:
+            mock_check_output.side_effect = subprocess.CalledProcessError(1, 'cat')
+            
+            result = rocml._driver_initialized()
+            
+            # Verify the function was called with stderr suppressed
+            mock_check_output.assert_called_once()
+            call_kwargs = mock_check_output.call_args
+            assert call_kwargs.kwargs.get('stderr') == subprocess.DEVNULL, \
+                "stderr should be suppressed with subprocess.DEVNULL"
+            assert result is False
+    
+    def test_driver_initialized_returns_true_when_live(self):
+        """Test that _driver_initialized() returns True when driver is live"""
+        with mock.patch('pyrsmi.rocml.subprocess.check_output') as mock_check_output:
+            mock_check_output.return_value = b'live\n'
+            
+            result = rocml._driver_initialized()
+            
+            assert result is True
+    
+    def test_driver_initialized_returns_false_on_error(self):
+        """Test that _driver_initialized() returns False when subprocess fails"""
+        with mock.patch('pyrsmi.rocml.subprocess.check_output') as mock_check_output:
+            mock_check_output.side_effect = subprocess.CalledProcessError(1, 'cat')
+            
+            result = rocml._driver_initialized()
+            
+            assert result is False
+
+
+@pytest.mark.unit
+class TestDriverNotLoadedError:
+    """Test error handling when AMD GPU driver is not loaded"""
+    
+    def test_amdsmi_driver_not_loaded_raises_clean_error(self):
+        """Test that AMDSMI_STATUS_DRIVER_NOT_LOADED raises a clean RuntimeError
+        
+        This verifies that when the amdsmi package reports the driver is not loaded,
+        we raise a clean error immediately without falling through to ctypes.
+        """
+        # Reset state
+        rocml._handle_initialized = False
+        rocml._processor_handles = []
+        rocml._using_amdsmi_package = False
+        
+        # Create a mock exception that matches the amdsmi driver not loaded error
+        class MockAmdSmiException(Exception):
+            pass
+        
+        mock_amdsmi = mock.MagicMock()
+        mock_amdsmi.amdsmi_init.side_effect = MockAmdSmiException(
+            "Error code:\n\t34 | AMDSMI_STATUS_DRIVER_NOT_LOADED - Driver not loaded"
+        )
+        
+        with mock.patch.dict('sys.modules', {'amdsmi': mock_amdsmi}):
+            with pytest.raises(RuntimeError) as exc_info:
+                rocml.smi_initialize()
+            
+            assert "AMD GPU driver not initialized" in str(exc_info.value)
+            assert "amdgpu driver" in str(exc_info.value)
+    
+    def test_ctypes_fallback_driver_not_loaded(self):
+        """Test ctypes fallback raises clean error when driver not loaded"""
+        # Reset state
+        rocml._handle_initialized = False
+        rocml._processor_handles = []
+        rocml._using_amdsmi_package = False
+        
+        # Mock amdsmi import to fail (forcing ctypes path)
+        # and mock _driver_initialized to return False
+        with mock.patch.dict('sys.modules', {'amdsmi': None}):
+            with mock.patch.object(rocml, '_load_rocm_library'):
+                with mock.patch.object(rocml, '_driver_initialized', return_value=False):
+                    with pytest.raises(RuntimeError) as exc_info:
+                        rocml.smi_initialize()
+                    
+                    assert "AMD GPU driver not initialized" in str(exc_info.value)
 

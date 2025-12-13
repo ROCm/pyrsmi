@@ -10,7 +10,71 @@
 - Python 3.9 or later
 - AMD Instinct™ MI-series GPU (tested on MI350X, MI300X, MI250X, MI210)
 - Linux operating system
+- **AMD GPU driver (`amdgpu`) must be loaded** (see below)
 - **Recommended:** `amdsmi` Python package (see [Installing amdsmi Package](#installing-amdsmi-package) below)
+
+## AMD GPU Driver Setup
+
+The `amdgpu` kernel driver must be installed and loaded for `pyrsmi` to work.
+
+### Verify Driver Status
+
+```bash
+# Check if driver is loaded
+cat /sys/module/amdgpu/initstate
+# Should output: live
+```
+
+### Load the Driver
+
+If the driver is installed but not loaded:
+
+```bash
+sudo modprobe amdgpu
+```
+
+To load the driver automatically on boot:
+
+```bash
+echo "amdgpu" | sudo tee /etc/modules-load.d/amdgpu.conf
+```
+
+### Install the Driver
+
+If the driver is not installed, install ROCm which includes the `amdgpu` driver:
+
+**Ubuntu 22.04/24.04:**
+```bash
+# Download and install the AMDGPU installer
+wget https://repo.radeon.com/amdgpu-install/6.4.1/ubuntu/jammy/amdgpu-install_6.4.60401-1_all.deb
+sudo apt install ./amdgpu-install_6.4.60401-1_all.deb
+
+# Install driver with ROCm support
+sudo amdgpu-install -y --usecase=graphics,rocm
+
+# Add user to required groups
+sudo usermod -a -G render,video $LOGNAME
+
+# Reboot to load the driver
+sudo reboot
+```
+
+**RHEL/CentOS 9:**
+```bash
+# Install the AMDGPU installer
+sudo dnf install https://repo.radeon.com/amdgpu-install/6.4.1/rhel/9.5/amdgpu-install-6.4.60401-1.el9.noarch.rpm
+
+# Install driver with ROCm support
+sudo amdgpu-install -y --usecase=graphics,rocm
+
+# Add user to required groups
+sudo usermod -a -G render,video $LOGNAME
+
+# Reboot to load the driver
+sudo reboot
+```
+
+For other distributions and detailed instructions, see the [AMD ROCm Installation Guide](https://rocm.docs.amd.com/projects/install-on-linux/en/latest/).
 
 ## What's New in Version 1.0
 

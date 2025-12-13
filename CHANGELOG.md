@@ -7,6 +7,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [1.1.1] - 2025-12-12
+
+### Fixed
+
+#### Improved Error Handling for Driver Not Loaded
+- **Cleaner Error Messages:** Fixed noisy `cat: /sys/module/amdgpu/initstate: No such file or directory` output when AMD GPU driver is not loaded
+- **Early Error Detection:** When `amdsmi` package reports `AMDSMI_STATUS_DRIVER_NOT_LOADED`, pyrsmi now raises a clean `RuntimeError` immediately instead of falling through to redundant ctypes checks
+- **Suppressed Subprocess Stderr:** Added `stderr=subprocess.DEVNULL` to `_driver_initialized()` function
+
+### Added
+
+#### Unit Tests for Error Handling
+- `test_driver_initialized_suppresses_stderr` - Verifies stderr suppression
+- `test_driver_initialized_returns_true_when_live` - Tests driver detection
+- `test_driver_initialized_returns_false_on_error` - Tests error handling
+- `test_amdsmi_driver_not_loaded_raises_clean_error` - Tests clean error path
+- `test_ctypes_fallback_driver_not_loaded` - Tests ctypes fallback error handling
+
+### Documentation
+
+- **README.md:** Added new "AMD GPU Driver Setup" section with:
+  - Instructions to verify driver status (`cat /sys/module/amdgpu/initstate`)
+  - How to load the driver (`sudo modprobe amdgpu`)
+  - How to configure automatic loading on boot
+  - Installation instructions for Ubuntu and RHEL/CentOS
+
+---
+
 ## [1.1.0] - 2025-12-03
 
 ### 🚀 New Feature: Native amdsmi Python Package Support
@@ -202,7 +230,8 @@ See [MIGRATION.md](MIGRATION.md) for detailed upgrade instructions.
 
 | Version | Date | ROCm | Backend | Status |
 |---------|------|------|---------|--------|
-| 1.1.0 | 2025-12-03 | 6.0+ | `amdsmi` + `amdsmi` package | ✅ Current |
+| 1.1.1 | 2025-12-12 | 6.0+ | `amdsmi` + `amdsmi` package | ✅ Current |
+| 1.1.0 | 2025-12-03 | 6.0+ | `amdsmi` + `amdsmi` package | ✅ Supported |
 | 1.0.0 | 2025-11-19 | 6.0+ | `amdsmi` | ✅ Supported |
 | 0.2.0 | 2023-XX-XX | 5.x | `rocm-smi-lib` | ⚠️ Deprecated |
 
