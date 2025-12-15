@@ -970,6 +970,7 @@ def smi_shutdown():
 
 def smi_get_kernel_version():
     """returns ROCm kernerl driver version"""
+    _load_rocm_library()
     ver_str = create_string_buffer(256)
     ret = rocm_lib.rsmi_version_str_get(rsmi_sw_component_t.RSMI_SW_COMP_DRIVER, ver_str, 256)
     return ver_str.value.decode() if rsmi_ret_ok(ret) else ''
