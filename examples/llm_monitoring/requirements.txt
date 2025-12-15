@@ -1,10 +1,11 @@
 # For AMD ROCm systems, install PyTorch with:
-# pip install torch --index-url https://download.pytorch.org/whl/rocm6.1
+# pip install torch --index-url https://download.pytorch.org/whl/rocm7.0
 #
 # Or use ROCm PyTorch container (recommended):
 # docker pull rocm/pytorch:latest
 
-torch>=2.0.0
+# torch>=2.0.0
+torch --index-url https://download.pytorch.org/whl/rocm7.1
 transformers>=4.30.0
 accelerate>=0.20.0
 pyrsmi>=1.0.0

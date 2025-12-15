@@ -8,8 +8,73 @@
 ## Requirements
 - **ROCm 6.0 or later** with AMD SMI Library (`libamd_smi.so`)
 - Python 3.9 or later
-- AMD Instinct™ MI-series GPU (tested on MI300X, MI250X, MI210)
+- AMD Instinct™ MI-series GPU (tested on MI350X, MI300X, MI250X, MI210)
 - Linux operating system
+- **AMD GPU driver (`amdgpu`) must be loaded** (see below)
+- **Recommended:** `amdsmi` Python package (see [Installing amdsmi Package](#installing-amdsmi-package) below)
+
+## AMD GPU Driver Setup
+
+The `amdgpu` kernel driver must be installed and loaded for `pyrsmi` to work.
+
+### Verify Driver Status
+
+```bash
+# Check if driver is loaded
+cat /sys/module/amdgpu/initstate
+# Should output: live
+```
+
+### Load the Driver
+
+If the driver is installed but not loaded:
+
+```bash
+sudo modprobe amdgpu
+```
+
+To load the driver automatically on boot:
+
+```bash
+echo "amdgpu" | sudo tee /etc/modules-load.d/amdgpu.conf
+```
+
+### Install the Driver
+
+If the driver is not installed, install ROCm which includes the `amdgpu` driver:
+
+**Ubuntu 22.04/24.04:**
+```bash
+# Download and install the AMDGPU installer
+wget https://repo.radeon.com/amdgpu-install/6.4.1/ubuntu/jammy/amdgpu-install_6.4.60401-1_all.deb
+sudo apt install ./amdgpu-install_6.4.60401-1_all.deb
+
+# Install driver with ROCm support
+sudo amdgpu-install -y --usecase=graphics,rocm
+
+# Add user to required groups
+sudo usermod -a -G render,video $LOGNAME
+
+# Reboot to load the driver
+sudo reboot
+```
+
+**RHEL/CentOS 9:**
+```bash
+# Install the AMDGPU installer
+sudo dnf install https://repo.radeon.com/amdgpu-install/6.4.1/rhel/9.5/amdgpu-install-6.4.60401-1.el9.noarch.rpm
+
+# Install driver with ROCm support
+sudo amdgpu-install -y --usecase=graphics,rocm
+
+# Add user to required groups
+sudo usermod -a -G render,video $LOGNAME
+
+# Reboot to load the driver
+sudo reboot
+```
+
+For other distributions and detailed instructions, see the [AMD ROCm Installation Guide](https://rocm.docs.amd.com/projects/install-on-linux/en/latest/).
 
 ## What's New in Version 1.0
 
@@ -56,6 +121,54 @@ Version 1.0 represents a significant upgrade with full migration from the deprec
   # Install a specific release tag
   pip install git+https://github.com/ROCm/pyrsmi.git@v1.0.0
   ```
+
+## Installing amdsmi Package
+
+For optimal functionality, `pyrsmi` works best with the `amdsmi` Python package installed. This is **strongly recommended** for:
+- Correct GPU device names (e.g., "AMD Instinct MI350X" instead of generic names)
+- Better compatibility with containerized environments (Docker, Singularity)
+- Improved reliability across different ROCm versions
+
+### Option 1: Install from ROCm (Recommended)
+
+The ROCm installation includes the `amdsmi` package with the latest device support:
+
+```bash
+# Copy and install from ROCm directory
+cp -r /opt/rocm/share/amd_smi /tmp/amd_smi_install
+pip install /tmp/amd_smi_install/
+rm -rf /tmp/amd_smi_install
+```
+
+### Option 2: Install from PyPI
+
+```bash
+pip install amdsmi
+```
+
+> **Note:** The PyPI version may not include support for the newest GPU models. For MI350X and other latest GPUs, use Option 1.
+
+### Containerized Environments
+
+ROCm PyTorch containers typically include the `amdsmi` package pre-installed. When using containers:
+
+```bash
+docker run -it --rm \
+  --device=/dev/kfd --device=/dev/dri \
+  --group-add video \
+  rocm/pytorch:latest bash
+
+# Inside container - amdsmi is usually pre-installed
+pip list | grep amdsmi   # Should show amdsmi package
+pip install pyrsmi       # Install pyrsmi
+```
+
+### Verifying Installation
+
+```python
+# Check if amdsmi is available and working
+python -c "import amdsmi; print(f'amdsmi version: {amdsmi.__version__}')"
+```
 
 ## How to use `pyrsmi`
 

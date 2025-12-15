@@ -27,6 +27,7 @@ This guide helps you migrate from pyrsmi 0.x (rocm-smi backend) to pyrsmi 1.0 (a
 ### New Version (1.0)
 - **ROCm 6.0+ with `libamd_smi.so`**
 - Python 3.9+
+- **Recommended:** `amdsmi` Python package for optimal functionality
 
 **Important:** ROCm 6.0 or later is **required** for pyrsmi 1.0.
 
@@ -47,6 +48,28 @@ cd pyrsmi
 git pull
 pip install -e .
 ```
+
+### Install amdsmi Package (Strongly Recommended)
+
+For best results, install the `amdsmi` Python package alongside pyrsmi:
+
+```bash
+# Option 1: Install from ROCm (recommended for latest GPU support like MI350X)
+cp -r /opt/rocm/share/amd_smi /tmp/amd_smi_install
+pip install /tmp/amd_smi_install/
+rm -rf /tmp/amd_smi_install
+
+# Option 2: Install from PyPI (may not support newest GPUs)
+pip install amdsmi
+```
+
+**Benefits of installing amdsmi:**
+- ✅ Correct device names (e.g., "AMD Instinct MI350X" instead of generic names)
+- ✅ Better compatibility with containerized environments
+- ✅ Improved reliability across different ROCm versions
+- ✅ Automatic GPU discovery without socket enumeration issues
+
+**Note:** ROCm PyTorch containers typically have `amdsmi` pre-installed.
 
 ---
 
@@ -360,6 +383,63 @@ UUIDs don't match previously stored values
 This is expected. UUIDs now come from `amdsmi` API with standardized format. Options:
 1. Regenerate UUID database with new values
 2. Use BDF-based unique ID (`smi_get_device_unique_id()`) which is more stable
+
+---
+
+### Device name shows "AMD Radeon Graphics" instead of correct model
+
+**Symptom:**
+```
+device name: AMD Radeon Graphics
+# Should be: AMD Instinct MI350X
+```
+
+**Solution:**
+Install the `amdsmi` Python package:
+```bash
+# Option 1: Install from ROCm (recommended)
+cp -r /opt/rocm/share/amd_smi /tmp/amd_smi_install
+pip install /tmp/amd_smi_install/
+rm -rf /tmp/amd_smi_install
+
+# Option 2: Install from PyPI (may not support newest GPUs)
+pip install amdsmi
+```
+
+The `amdsmi` package provides correct device detection and naming. Without it, pyrsmi falls back to ctypes which may not have updated device ID mappings for newer GPUs.
+
+---
+
+### Errors about missing amdgpu.ids file
+
+**Symptom:**
+```
+/opt/amdgpu/share/libdrm/amdgpu.ids: No such file or directory
+```
+
+**Solution:**
+Create a symlink to the amdgpu.ids file:
+```bash
+sudo mkdir -p /opt/amdgpu/share/libdrm
+sudo ln -sf /opt/amdgpuras/share/libdrm/amdgpu.ids /opt/amdgpu/share/libdrm/amdgpu.ids
+```
+
+---
+
+### GPU discovery fails in containers
+
+**Symptom:**
+```
+WARNING: No AMD GPU processors found
+```
+
+**Solution:**
+1. Ensure container has GPU access:
+   ```bash
+   docker run --device=/dev/kfd --device=/dev/dri --group-add video ...
+   ```
+2. Install the `amdsmi` Python package inside the container (usually pre-installed in ROCm containers)
+3. ROCm PyTorch containers (`rocm/pytorch:latest`) are recommended as they include all dependencies
 
 ---
 

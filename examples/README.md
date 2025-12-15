@@ -1,5 +1,26 @@
 # Examples of using `pyrsmi` package
 
+## Prerequisites
+
+Before running these examples, ensure you have the following installed:
+
+1. **ROCm 6.0+** with AMD GPU driver loaded
+2. **pyrsmi** package: `pip install pyrsmi`
+3. **amdsmi** Python package (strongly recommended for correct device names):
+   ```bash
+   # Option 1: Install from ROCm (recommended for latest GPU support)
+   cp -r /opt/rocm/share/amd_smi /tmp/amd_smi_install
+   pip install /tmp/amd_smi_install/
+   rm -rf /tmp/amd_smi_install
+   
+   # Option 2: Install from PyPI
+   pip install amdsmi
+   ```
+
+> **Note:** Without the `amdsmi` package, device names may show as generic "AMD Radeon Graphics" instead of the correct model name (e.g., "AMD Instinct MI350X").
+
+---
+
 ## `cli` Directory
 
 - Displays selected info of the available devices
@@ -48,15 +69,24 @@ docker run -it --rm \
   --security-opt seccomp=unconfined \
   -v $(pwd):/workspace -w /workspace \
   rocm/pytorch:latest bash
-# Inside container: pip install transformers accelerate pyrsmi
 
-# Method 2: Install ROCm PyTorch locally
+# Inside container (amdsmi is usually pre-installed):
+pip install transformers accelerate pyrsmi
+
+# Method 2: Install ROCm PyTorch locally (bare metal)
 pip install torch --index-url https://download.pytorch.org/whl/rocm6.1
 pip install transformers accelerate pyrsmi
+
+# Install amdsmi for correct device names (recommended)
+cp -r /opt/rocm/share/amd_smi /tmp/amd_smi_install
+pip install /tmp/amd_smi_install/
+rm -rf /tmp/amd_smi_install
 
 # Run the example
 python monitor_llm_inference.py
 ```
+
+> **Note:** ROCm PyTorch containers include the `amdsmi` package pre-installed, ensuring correct device detection and naming.
 
 ### Features
 

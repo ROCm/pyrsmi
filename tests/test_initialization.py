@@ -3,6 +3,8 @@ Test core initialization and shutdown functionality (Phase 1)
 """
 
 import pytest
+import subprocess
+from unittest import mock
 from pyrsmi import rocml
 
 
@@ -13,22 +15,84 @@ class TestLibraryLoading:
         """Test that the correct library name is set"""
         assert rocml.LIBROCM_NAME == 'libamd_smi.so'
     
-    def test_library_loaded(self, rocm_session):
-        """Test that the library is loaded"""
-        assert rocml.rocm_lib is not None
+    def test_library_or_package_available(self):
+        """Test that either amdsmi package or library is available"""
+        # Fresh initialization to get correct state
+        rocml.smi_initialize()
+        try:
+            if rocml._using_amdsmi_package:
+                # Using amdsmi package, rocm_lib might not be loaded
+                import amdsmi
+                assert amdsmi is not None
+            else:
+                # Using ctypes, library should be loaded
+                assert rocml.rocm_lib is not None
+        finally:
+            rocml.smi_shutdown()
     
-    def test_required_functions_exist(self, rocm_session):
+    def test_required_functions_exist(self):
         """Test that all required amdsmi functions are available"""
-        required_funcs = [
-            'amdsmi_init',
-            'amdsmi_shut_down',
-            'amdsmi_get_socket_handles',
-            'amdsmi_get_processor_handles',
-            'amdsmi_status_code_to_string'
-        ]
-        
-        for func_name in required_funcs:
-            assert hasattr(rocml.rocm_lib, func_name), f"Missing function: {func_name}"
+        # Fresh initialization to get correct state
+        rocml.smi_initialize()
+        try:
+            if rocml._using_amdsmi_package:
+                # When using amdsmi package, check package functions
+                import amdsmi
+                required_funcs = [
+                    'amdsmi_init',
+                    'amdsmi_shut_down',
+                    'amdsmi_get_processor_handles',
+                    'amdsmi_get_gpu_asic_info'
+                ]
+                for func_name in required_funcs:
+                    assert hasattr(amdsmi, func_name), f"Missing amdsmi package function: {func_name}"
+            else:
+                # When using ctypes, check library functions
+                required_funcs = [
+                    'amdsmi_init',
+                    'amdsmi_shut_down',
+                    'amdsmi_get_socket_handles',
+                    'amdsmi_get_processor_handles',
+                    'amdsmi_status_code_to_string'
+                ]
+                for func_name in required_funcs:
+                    assert hasattr(rocml.rocm_lib, func_name), f"Missing library function: {func_name}"
+        finally:
+            rocml.smi_shutdown()
+
+
+class TestAmdSmiPackageIntegration:
+    """Test amdsmi Python package integration"""
+    
+    def test_amdsmi_package_check(self, amdsmi_available):
+        """Test amdsmi package availability detection"""
+        # This test documents whether amdsmi package is installed
+        if amdsmi_available:
+            import amdsmi
+            assert hasattr(amdsmi, '__version__')
+        else:
+            pytest.skip("amdsmi package not installed - install for best results")
+    
+    def test_using_amdsmi_package_flag(self):
+        """Test that _using_amdsmi_package flag is set correctly"""
+        rocml.smi_initialize()
+        try:
+            assert isinstance(rocml._using_amdsmi_package, bool)
+        finally:
+            rocml.smi_shutdown()
+    
+    def test_amdsmi_preferred_when_available(self, amdsmi_available):
+        """Test that amdsmi package is used when available"""
+        # Fresh initialization to get correct state
+        rocml.smi_initialize()
+        try:
+            if amdsmi_available:
+                # amdsmi package should be preferred when available
+                assert rocml._using_amdsmi_package is True, \
+                    "amdsmi package is available but not being used"
+            # If not available, ctypes fallback is fine
+        finally:
+            rocml.smi_shutdown()
 
 
 class TestInitialization:
@@ -49,13 +113,16 @@ class TestInitialization:
         """Test that re-initialization works"""
         rocml.smi_initialize()
         count1 = len(rocml._processor_handles)
+        using_package1 = rocml._using_amdsmi_package
         rocml.smi_shutdown()
         
         rocml.smi_initialize()
         count2 = len(rocml._processor_handles)
+        using_package2 = rocml._using_amdsmi_package
         rocml.smi_shutdown()
         
         assert count1 == count2
+        assert using_package1 == using_package2, "Backend should be consistent"
 
 
 class TestHandleAccess:
@@ -85,4 +152,96 @@ class TestShutdown:
         
         assert rocml._handle_initialized is False
         assert len(rocml._processor_handles) == 0
+        assert rocml._using_amdsmi_package is False
+
+
+@pytest.mark.unit
+class TestDriverInitialized:
+    """Test _driver_initialized() function - unit tests with mocking"""
+    
+    def test_driver_initialized_suppresses_stderr(self):
+        """Test that _driver_initialized() suppresses stderr output from subprocess
+        
+        This verifies the fix for the noisy 'cat: /sys/module/amdgpu/initstate: No such file'
+        message that was leaking to the terminal.
+        """
+        # Mock subprocess.check_output to verify stderr=DEVNULL is passed
+        with mock.patch('pyrsmi.rocml.subprocess.check_output') as mock_check_output:
+            mock_check_output.side_effect = subprocess.CalledProcessError(1, 'cat')
+            
+            result = rocml._driver_initialized()
+            
+            # Verify the function was called with stderr suppressed
+            mock_check_output.assert_called_once()
+            call_kwargs = mock_check_output.call_args
+            assert call_kwargs.kwargs.get('stderr') == subprocess.DEVNULL, \
+                "stderr should be suppressed with subprocess.DEVNULL"
+            assert result is False
+    
+    def test_driver_initialized_returns_true_when_live(self):
+        """Test that _driver_initialized() returns True when driver is live"""
+        with mock.patch('pyrsmi.rocml.subprocess.check_output') as mock_check_output:
+            mock_check_output.return_value = b'live\n'
+            
+            result = rocml._driver_initialized()
+            
+            assert result is True
+    
+    def test_driver_initialized_returns_false_on_error(self):
+        """Test that _driver_initialized() returns False when subprocess fails"""
+        with mock.patch('pyrsmi.rocml.subprocess.check_output') as mock_check_output:
+            mock_check_output.side_effect = subprocess.CalledProcessError(1, 'cat')
+            
+            result = rocml._driver_initialized()
+            
+            assert result is False
+
+
+@pytest.mark.unit
+class TestDriverNotLoadedError:
+    """Test error handling when AMD GPU driver is not loaded"""
+    
+    def test_amdsmi_driver_not_loaded_raises_clean_error(self):
+        """Test that AMDSMI_STATUS_DRIVER_NOT_LOADED raises a clean RuntimeError
+        
+        This verifies that when the amdsmi package reports the driver is not loaded,
+        we raise a clean error immediately without falling through to ctypes.
+        """
+        # Reset state
+        rocml._handle_initialized = False
+        rocml._processor_handles = []
+        rocml._using_amdsmi_package = False
+        
+        # Create a mock exception that matches the amdsmi driver not loaded error
+        class MockAmdSmiException(Exception):
+            pass
+        
+        mock_amdsmi = mock.MagicMock()
+        mock_amdsmi.amdsmi_init.side_effect = MockAmdSmiException(
+            "Error code:\n\t34 | AMDSMI_STATUS_DRIVER_NOT_LOADED - Driver not loaded"
+        )
+        
+        with mock.patch.dict('sys.modules', {'amdsmi': mock_amdsmi}):
+            with pytest.raises(RuntimeError) as exc_info:
+                rocml.smi_initialize()
+            
+            assert "AMD GPU driver not initialized" in str(exc_info.value)
+            assert "amdgpu driver" in str(exc_info.value)
+    
+    def test_ctypes_fallback_driver_not_loaded(self):
+        """Test ctypes fallback raises clean error when driver not loaded"""
+        # Reset state
+        rocml._handle_initialized = False
+        rocml._processor_handles = []
+        rocml._using_amdsmi_package = False
+        
+        # Mock amdsmi import to fail (forcing ctypes path)
+        # and mock _driver_initialized to return False
+        with mock.patch.dict('sys.modules', {'amdsmi': None}):
+            with mock.patch.object(rocml, '_load_rocm_library'):
+                with mock.patch.object(rocml, '_driver_initialized', return_value=False):
+                    with pytest.raises(RuntimeError) as exc_info:
+                        rocml.smi_initialize()
+                    
+                    assert "AMD GPU driver not initialized" in str(exc_info.value)
 

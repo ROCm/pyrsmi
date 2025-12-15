@@ -7,6 +7,93 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [1.1.1] - 2025-12-12
+
+### Fixed
+
+#### Improved Error Handling for Driver Not Loaded
+- **Cleaner Error Messages:** Fixed noisy `cat: /sys/module/amdgpu/initstate: No such file or directory` output when AMD GPU driver is not loaded
+- **Early Error Detection:** When `amdsmi` package reports `AMDSMI_STATUS_DRIVER_NOT_LOADED`, pyrsmi now raises a clean `RuntimeError` immediately instead of falling through to redundant ctypes checks
+- **Suppressed Subprocess Stderr:** Added `stderr=subprocess.DEVNULL` to `_driver_initialized()` function
+
+### Added
+
+#### Unit Tests for Error Handling
+- `test_driver_initialized_suppresses_stderr` - Verifies stderr suppression
+- `test_driver_initialized_returns_true_when_live` - Tests driver detection
+- `test_driver_initialized_returns_false_on_error` - Tests error handling
+- `test_amdsmi_driver_not_loaded_raises_clean_error` - Tests clean error path
+- `test_ctypes_fallback_driver_not_loaded` - Tests ctypes fallback error handling
+
+### Documentation
+
+- **README.md:** Added new "AMD GPU Driver Setup" section with:
+  - Instructions to verify driver status (`cat /sys/module/amdgpu/initstate`)
+  - How to load the driver (`sudo modprobe amdgpu`)
+  - How to configure automatic loading on boot
+  - Installation instructions for Ubuntu and RHEL/CentOS
+
+---
+
+## [1.1.0] - 2025-12-03
+
+### 🚀 New Feature: Native amdsmi Python Package Support
+
+Version 1.1.0 introduces first-class support for the native `amdsmi` Python package as the preferred backend. This provides better compatibility, especially in containerized environments like ROCm PyTorch containers.
+
+### Added
+
+#### amdsmi Python Package Integration
+- **Preferred Backend:** pyrsmi now automatically detects and uses the native `amdsmi` Python package when available
+- **Container Support:** Seamless GPU detection in ROCm PyTorch containers where `amdsmi` is pre-installed
+- **Fallback Mechanism:** Automatically falls back to ctypes interface if `amdsmi` package is not available
+- **`_using_amdsmi_package` Flag:** New internal flag to track which backend is active
+
+#### Enhanced Functions with amdsmi Package Support
+- `smi_get_device_name()` - Returns correct device names (e.g., "AMD Instinct MI350X")
+- `smi_get_device_id()` - Proper hex string to integer conversion
+- `smi_get_device_revision()` - Device revision queries
+- `smi_get_device_unique_id()` - BDF-based unique identifiers
+- `smi_get_device_pci_id()` - PCI identifier queries
+- `smi_get_device_uuid()` - UUID generation with multiple formats
+- `smi_get_device_memory_used/total/busy()` - Memory monitoring
+- `smi_get_device_utilization()` - GPU activity queries
+- `smi_get_device_average_power()` - Power monitoring
+- `smi_get_device_pcie_bandwidth()` - PCIe information with wrapper class
+
+#### Stderr Suppression
+- Added `_suppress_stderr()` context manager to silence library warnings
+- Suppresses `/opt/amdgpu/share/libdrm/amdgpu.ids: No such file or directory` messages
+
+#### New Test Suite
+- `test_amdsmi_integration.py` - Comprehensive tests for amdsmi package integration
+- Updated existing tests to work with both backends
+
+### Changed
+
+- **Initialization Priority:** 
+  1. Try `amdsmi` Python package first
+  2. Fall back to `amdsmi_get_processor_handles_by_type()` (ctypes)
+  3. Fall back to socket-based enumeration (ctypes)
+- **Documentation:** Updated README, examples README, and MIGRATION.md with amdsmi package instructions
+- **Test Infrastructure:** Tests now properly handle both amdsmi package and ctypes backends
+
+### Fixed
+
+- **Container GPU Detection:** Fixed "No AMD GPU processors found" error in ROCm containers
+- **Device Name Display:** Fixed "AMD Radeon Graphics" showing instead of correct model name
+- **Shutdown Handling:** Fixed `AttributeError` when shutting down amdsmi package backend
+- **Test State Pollution:** Fixed test failures when running full test suite
+
+### Documentation
+
+- Added "Installing amdsmi Package" section to README.md
+- Updated examples/README.md with prerequisites for amdsmi package
+- Enhanced MIGRATION.md with troubleshooting for common issues
+- Updated tests/README.md with new test file information
+
+---
+
 ## [1.0.0] - 2025-11-19
 
 ### 🚀 Major Changes
@@ -143,7 +230,9 @@ See [MIGRATION.md](MIGRATION.md) for detailed upgrade instructions.
 
 | Version | Date | ROCm | Backend | Status |
 |---------|------|------|---------|--------|
-| 1.0.0 | 2025-11-19 | 6.0+ | `amdsmi` | ✅ Current |
+| 1.1.1 | 2025-12-12 | 6.0+ | `amdsmi` + `amdsmi` package | ✅ Current |
+| 1.1.0 | 2025-12-03 | 6.0+ | `amdsmi` + `amdsmi` package | ✅ Supported |
+| 1.0.0 | 2025-11-19 | 6.0+ | `amdsmi` | ✅ Supported |
 | 0.2.0 | 2023-XX-XX | 5.x | `rocm-smi-lib` | ⚠️ Deprecated |
 
 ---
@@ -157,11 +246,12 @@ See [MIGRATION.md](MIGRATION.md) for detailed upgrade instructions.
 
 ## Testing
 
-Version 1.0 has been tested on:
+Version 1.1.0 has been tested on:
 - **Hardware:** AMD Instinct MI350X, MI300X, MI250X, MI210
 - **Configuration:** 8-GPU systems with XGMI interconnect
 - **ROCm Version:** 6.3.0
-- **Test Coverage:** 26+ functions tested across 6 test suites
+- **Environments:** Bare metal and ROCm PyTorch containers
+- **Test Coverage:** 30+ functions tested across 7 test suites
 - **Success Rate:** 100% (all tests passing)
 
 ---
